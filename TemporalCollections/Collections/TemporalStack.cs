@@ -1,9 +1,6 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
 
@@ -19,7 +16,7 @@ namespace TemporalCollections.Collections
     public class TemporalStack<T> : ITimeQueryable<T>
     {
         private readonly ConcurrentStack<TemporalItem<T>> _stack = new();
-        private readonly Lock _sync = new();
+        private readonly Lock _lock = new();
 
         /// <summary>
         /// Gets the number of items currently in the stack.
@@ -28,7 +25,7 @@ namespace TemporalCollections.Collections
         {
             get
             {
-                lock (_sync)
+                lock (_lock)
                 {
                     return _stack.Count;
                 }
@@ -42,7 +39,7 @@ namespace TemporalCollections.Collections
         public void Push(T item)
         {
             var temporalItem = TemporalItem<T>.Create(item);
-            lock (_sync)
+            lock (_lock)
             {
                 _stack.Push(temporalItem);
             }
@@ -55,7 +52,7 @@ namespace TemporalCollections.Collections
         /// <exception cref="InvalidOperationException">Thrown if the stack is empty.</exception>
         public TemporalItem<T> Pop()
         {
-            lock (_sync)
+            lock (_lock)
             {
                 if (_stack.TryPop(out var item))
                     return item;
@@ -70,7 +67,7 @@ namespace TemporalCollections.Collections
         /// <exception cref="InvalidOperationException">Thrown if the stack is empty.</exception>
         public TemporalItem<T> Peek()
         {
-            lock (_sync)
+            lock (_lock)
             {
                 if (_stack.TryPeek(out var item))
                     return item;
@@ -87,7 +84,7 @@ namespace TemporalCollections.Collections
         /// <returns>A snapshot list of temporal items within the specified time range.</returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
-            lock (_sync)
+            lock (_lock)
             {
                 // materialize to a list while holding the lock to have a consistent snapshot
                 return _stack.Where(i => i.Timestamp >= from && i.Timestamp <= to).ToList();
@@ -105,7 +102,7 @@ namespace TemporalCollections.Collections
         /// <param name="cutoff">The cutoff timestamp; items with Timestamp &lt; cutoff will be removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
-            lock (_sync)
+            lock (_lock)
             {
                 var keep = new List<TemporalItem<T>>();
 

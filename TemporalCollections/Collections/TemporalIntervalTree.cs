@@ -51,7 +51,7 @@ namespace TemporalCollections.Collections
         }
 
         private Node? _root;
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
 
         /// <summary>
         /// Inserts a new interval with an associated value into the tree.

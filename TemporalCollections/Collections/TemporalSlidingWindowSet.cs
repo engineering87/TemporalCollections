@@ -66,7 +66,16 @@ namespace TemporalCollections.Collections
             return _dict.Values.ToList();
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Retrieves all temporal items in the collection whose timestamps
+        /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
+        /// </summary>
+        /// <param name="from">The start of the timestamp range (inclusive).</param>
+        /// <param name="to">The end of the timestamp range (inclusive).</param>
+        /// <returns>
+        /// A collection of <see cref="TemporalItem{T}"/> instances whose timestamps
+        /// are within the specified range.
+        /// </returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
             return _dict.Values
@@ -74,7 +83,10 @@ namespace TemporalCollections.Collections
                 .ToList();
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Removes all items from the collection that have timestamps older than the specified cutoff.
+        /// </summary>
+        /// <param name="cutoff">The cutoff timestamp; items with timestamps less than this will be removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
             foreach (var kvp in _dict)

@@ -32,8 +32,16 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Retrieves all timestamped values for the specified key whose timestamps fall within the inclusive range [from, to].
+        /// Retrieves all temporal items associated with the specified <paramref name="key"/> whose timestamps
+        /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
         /// </summary>
+        /// <param name="key">The key to look up temporal items for.</param>
+        /// <param name="from">The start of the timestamp range (inclusive).</param>
+        /// <param name="to">The end of the timestamp range (inclusive).</param>
+        /// <returns>
+        /// A collection of <see cref="TemporalItem{TValue}"/> instances matching the key and timestamp range.
+        /// Returns an empty collection if the key is not found or no items fall within the range.
+        /// </returns>
         public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTime from, DateTime to)
         {
             if (_dict.TryGetValue(key, out var list))
@@ -45,7 +53,7 @@ namespace TemporalCollections.Collections
                         .ToList();
                 }
             }
-            return Enumerable.Empty<TemporalItem<TValue>>();
+            return [];
         }
 
         /// <summary>
@@ -81,7 +89,19 @@ namespace TemporalCollections.Collections
 
         #region ITimeQueryable<KeyValuePair<TKey,TValue>> implementation
 
-        /// <inheritdoc/>
+        /// <summary>
+        /// Retrieves all temporal items stored in the dictionary whose timestamps
+        /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
+        /// Each item returned is wrapped as a <see cref="TemporalItem{T}"/> containing
+        /// a <see cref="KeyValuePair{TKey, TValue}"/> with the original key and value.
+        /// The collections are locked individually during enumeration for thread safety.
+        /// </summary>
+        /// <param name="from">The start of the timestamp range (inclusive).</param>
+        /// <param name="to">The end of the timestamp range (inclusive).</param>
+        /// <returns>
+        /// A list of <see cref="TemporalItem{KeyValuePair{TKey, TValue}}"/> instances
+        /// where each item's timestamp is within the specified range.
+        /// </returns>
         public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTime from, DateTime to)
         {
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();

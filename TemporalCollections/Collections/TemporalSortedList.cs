@@ -31,7 +31,17 @@ namespace TemporalCollections.Collections
             }
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Retrieves all temporal items in the sorted list whose timestamps
+        /// are within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
+        /// The list is locked during the operation for thread safety.
+        /// </summary>
+        /// <param name="from">The start of the timestamp range (inclusive).</param>
+        /// <param name="to">The end of the timestamp range (inclusive).</param>
+        /// <returns>
+        /// A list of <see cref="TemporalItem{T}"/> instances ordered by timestamp,
+        /// whose timestamps fall within the specified range.
+        /// </returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
             lock (_lock)
@@ -49,7 +59,12 @@ namespace TemporalCollections.Collections
             }
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Removes all temporal items from the sorted list whose timestamps
+        /// are earlier than the specified <paramref name="cutoff"/> timestamp.
+        /// The operation is thread-safe and locks the list during modification.
+        /// </summary>
+        /// <param name="cutoff">The cutoff timestamp; items with timestamps less than this are removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
             lock (_lock)
