@@ -144,52 +144,161 @@ namespace TemporalCollections.Collections
             }
         }
 
-        #region Internal recursive helpers
+        /// <summary>
+        /// Returns the total timespan covered by items in the collection
+        /// as the difference between the earliest and latest timestamps (timestamps == interval starts).
+        /// Returns <see cref="TimeSpan.Zero"/> if the tree is empty or contains a single item.
+        /// </summary>
+        public TimeSpan GetTimeSpan()
+        {
+            lock (_lock)
+            {
+                if (_root is null) return TimeSpan.Zero;
+
+                var minNode = FindMinByStart(_root);
+                var maxNode = FindMaxByStart(_root);
+                if (minNode is null || maxNode is null) return TimeSpan.Zero;
+
+                var span = maxNode.Start - minNode.Start;
+                return span < TimeSpan.Zero ? TimeSpan.Zero : span;
+            }
+        }
+
+        /// <summary>
+        /// Returns the number of items whose timestamps fall within [from, to] (inclusive).
+        /// Here, the timestamp is the interval start.
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public int CountInRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                return CountByStartRange(_root, from, to);
+            }
+        }
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the specified range [from, to] (inclusive).
+        /// Timestamp is the interval start.
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public void RemoveRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                _root = RemoveByStartRange(_root, from, to);
+            }
+        }
+
+        /// <summary>
+        /// Removes all items from the collection.
+        /// </summary>
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _root = null;
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the latest item based on timestamp (maximum Start) or null if empty.
+        /// </summary>
+        public TemporalItem<T>? GetLatest()
+        {
+            lock (_lock)
+            {
+                if (_root is null) return null;
+                var n = FindMaxByStart(_root);
+                return n is null ? null : new TemporalItem<T>(n.Value, n.Start);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the earliest item based on timestamp (minimum Start) or null if empty.
+        /// </summary>
+        public TemporalItem<T>? GetEarliest()
+        {
+            lock (_lock)
+            {
+                if (_root is null) return null;
+                var n = FindMinByStart(_root);
+                return n is null ? null : new TemporalItem<T>(n.Value, n.Start);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly before the specified time (Start &lt; time).
+        /// </summary>
+        /// <param name="time">Exclusive upper bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
+        {
+            lock (_lock)
+            {
+                var list = new List<TemporalItem<T>>();
+                CollectBefore(_root, time, list);
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly after the specified time (Start &gt; time).
+        /// </summary>
+        /// <param name="time">Exclusive lower bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
+        {
+            lock (_lock)
+            {
+                var list = new List<TemporalItem<T>>();
+                CollectAfter(_root, time, list);
+                return list;
+            }
+        }
+
+        #region Internal helpers
 
         // Collect TemporalItem<T> for intervals overlapping [qs,qe].
-        private void QueryCollect(Node? node, DateTime qs, DateTime qe, List<TemporalItem<T>> result)
+        private static void QueryCollect(Node? node, DateTime qs, DateTime qe, List<TemporalItem<T>> result)
         {
-            if (node == null) return;
+            if (node is null) return;
 
-            if (node.Start <= qe && node.End >= qs)
-            {
-                // Use Start as the "timestamp" for the temporal item (documented choice)
-                result.Add(new TemporalItem<T>(node.Value, node.Start));
-            }
-
-            if (node.Left != null && node.Left.MaxEnd >= qs)
-            {
+            // Left subtree: only if it may overlap [qs, qe]
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
                 QueryCollect(node.Left, qs, qe, result);
-            }
 
-            if (node.Right != null && node.Start <= qe)
-            {
+            // Current node
+            if (node.Start <= qe && node.End >= qs)
+                result.Add(new TemporalItem<T>(node.Value, node.Start));
+
+            // Right subtree: only if nodes there can start <= qe
+            if (node.Right is not null && node.Start <= qe)
                 QueryCollect(node.Right, qs, qe, result);
-            }
         }
 
         // Collect values for compatibility with older Query method
-        private void QueryValues(Node? node, DateTime qs, DateTime qe, List<T> result)
+        private static void QueryValues(Node? node, DateTime qs, DateTime qe, List<T> result)
         {
-            if (node == null) return;
+            if (node is null) return;
+
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
+                QueryValues(node.Left, qs, qe, result);
 
             if (node.Start <= qe && node.End >= qs)
-            {
                 result.Add(node.Value);
-            }
 
-            if (node.Left != null && node.Left.MaxEnd >= qs)
-            {
-                QueryValues(node.Left, qs, qe, result);
-            }
-
-            if (node.Right != null && node.Start <= qe)
-            {
+            if (node.Right is not null && node.Start <= qe)
                 QueryValues(node.Right, qs, qe, result);
-            }
         }
 
-        private Node Insert(Node? node, DateTime start, DateTime end, T value)
+        private static Node Insert(Node? node, DateTime start, DateTime end, T value)
         {
             if (node == null)
                 return new Node(start, end, value);
@@ -206,7 +315,7 @@ namespace TemporalCollections.Collections
             return node;
         }
 
-        private (Node? node, bool removed) Remove(Node? node, DateTime start, DateTime end, T value)
+        private static (Node? node, bool removed) Remove(Node? node, DateTime start, DateTime end, T value)
         {
             if (node == null) return (null, false);
 
@@ -246,8 +355,29 @@ namespace TemporalCollections.Collections
             return (node, removed);
         }
 
+        /// <summary>
+        /// Counts nodes with Start in [from, to] using BST pruning.
+        /// </summary>
+        private static int CountByStartRange(Node? node, DateTime from, DateTime to)
+        {
+            if (node is null) return 0;
+
+            if (node.Start < from)
+            {
+                return CountByStartRange(node.Right, from, to);
+            }
+            if (node.Start > to)
+            {
+                return CountByStartRange(node.Left, from, to);
+            }
+
+            // node.Start within [from, to]
+            return 1 + CountByStartRange(node.Left, from, to) + CountByStartRange(node.Right, from, to);
+        }
+
+
         // Removes nodes whose End < cutoff and returns new subtree root.
-        private Node? RemoveOlderThanInternal(Node? node, DateTime cutoff)
+        private static Node? RemoveOlderThanInternal(Node? node, DateTime cutoff)
         {
             if (node == null) return null;
 
@@ -274,13 +404,13 @@ namespace TemporalCollections.Collections
             return node;
         }
 
-        private Node FindMin(Node node)
+        private static Node FindMin(Node node)
         {
             while (node.Left != null) node = node.Left;
             return node;
         }
 
-        private Node? RemoveMin(Node node)
+        private static Node? RemoveMin(Node node)
         {
             if (node.Left == null)
                 return node.Right;
@@ -294,6 +424,67 @@ namespace TemporalCollections.Collections
             return node;
         }
 
+        // Delete a single node and return the new subtree root.
+        // - 0/1 child: return the non-null child (or null)
+        // - 2 children: replace with inorder successor (min on right) and remove that successor
+        private static Node? DeleteNode(Node node)
+        {
+            if (node.Left is null) return UpdateMaxEndChain(node.Right);
+            if (node.Right is null) return UpdateMaxEndChain(node.Left);
+
+            var succ = FindMin(node.Right);
+            node.Start = succ.Start;
+            node.End = succ.End;
+            node.Value = succ.Value;
+            node.Right = RemoveMin(node.Right);
+
+            return UpdateMaxEndChain(node);
+        }
+
+        /// <summary>
+        /// Removes nodes whose Start is in [from, to] (inclusive) and returns the new subtree root.
+        /// </summary>
+        private static Node? RemoveByStartRange(Node? node, DateTime from, DateTime to)
+        {
+            if (node is null) return null;
+
+            // First prune children so we don't miss any matches deeper in the tree.
+            node.Left = RemoveByStartRange(node.Left, from, to);
+            node.Right = RemoveByStartRange(node.Right, from, to);
+
+            // Now handle the current node. If it's in range, delete it and re-run on the new root.
+            if (node.Start >= from && node.Start <= to)
+            {
+                node = DeleteNode(node);
+
+                // The subtree root changed; keep removing while the new root is still in range.
+                node = RemoveByStartRange(node, from, to);
+                return node; // UpdateMaxEndChain already done in DeleteNode + recursive calls
+            }
+
+            return UpdateMaxEndChain(node);
+        }
+
+        /// <summary>
+        /// Returns leftmost by Start.
+        /// </summary>
+        private static Node? FindMinByStart(Node? node)
+        {
+            if (node is null) return null;
+            while (node.Left is not null) node = node.Left;
+            return node;
+        }
+
+        /// <summary>
+        /// Returns rightmost by Start.
+        /// </summary>
+        private static Node? FindMaxByStart(Node? node)
+        {
+            if (node is null) return null;
+            while (node.Right is not null) node = node.Right;
+            return node;
+        }
+
         private static DateTime MaxDate(params DateTime[] dates)
         {
             DateTime max = DateTime.MinValue;
@@ -302,6 +493,60 @@ namespace TemporalCollections.Collections
                 if (d > max) max = d;
             }
             return max;
+        }
+
+        /// <summary>
+        /// Recomputes MaxEnd along the current node and returns it.
+        /// </summary>
+        private static Node? UpdateMaxEndChain(Node? node)
+        {
+            if (node is null) return null;
+            node.MaxEnd = MaxDate(node.End,
+                node.Left?.MaxEnd ?? DateTime.MinValue,
+                node.Right?.MaxEnd ?? DateTime.MinValue);
+            return node;
+        }
+
+        /// <summary>
+        /// In-order traversal collecting nodes with Start &lt; time; prunes right branch when possible.
+        /// </summary>
+        private static void CollectBefore(Node? node, DateTime time, List<TemporalItem<T>> acc)
+        {
+            if (node is null) return;
+
+            if (node.Start >= time)
+            {
+                // Entire right subtree also has Start >= time if we came from left? Not guaranteed;
+                // But we can safely skip the right subtree only when node.Start >= time and right.Start >= node.Start.
+                // We still need to explore left where smaller Starts may exist.
+                CollectBefore(node.Left, time, acc);
+                return;
+            }
+
+            // node.Start < time
+            CollectBefore(node.Left, time, acc);
+            acc.Add(new TemporalItem<T>(node.Value, node.Start));
+            CollectBefore(node.Right, time, acc);
+        }
+
+        /// <summary>
+        /// In-order traversal collecting nodes with Start &gt; time; prunes left branch when possible.
+        /// </summary>
+        private static void CollectAfter(Node? node, DateTime time, List<TemporalItem<T>> acc)
+        {
+            if (node is null) return;
+
+            if (node.Start <= time)
+            {
+                // All in left subtree are <= node.Start <= time, so skip left; check right.
+                CollectAfter(node.Right, time, acc);
+                return;
+            }
+
+            // node.Start > time
+            CollectAfter(node.Left, time, acc);
+            acc.Add(new TemporalItem<T>(node.Value, node.Start));
+            CollectAfter(node.Right, time, acc);
         }
 
         #endregion

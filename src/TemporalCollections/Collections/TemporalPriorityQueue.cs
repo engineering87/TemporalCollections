@@ -47,10 +47,11 @@ namespace TemporalCollections.Collections
         /// <param name="priority">The priority associated with the value.</param>
         public void Enqueue(TValue value, TPriority priority)
         {
-            var item = new QueueItem(value, priority, DateTime.UtcNow);
+            // Use TemporalItem.Create to guarantee strictly increasing timestamps (even across threads)
+            var ti = TemporalItem<TValue>.Create(value);
             lock (_lock)
             {
-                _set.Add(item);
+                _set.Add(new QueueItem(ti.Value, priority, ti.Timestamp));
             }
         }
 
@@ -104,15 +105,17 @@ namespace TemporalCollections.Collections
         /// <returns>An enumerable of temporal items in the specified time range.</returns>
         public IEnumerable<TemporalItem<TValue>> GetInRange(DateTime from, DateTime to)
         {
-            List<TemporalItem<TValue>> results;
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
             lock (_lock)
             {
-                results = _set
+                return _set
                     .Where(item => item.Timestamp >= from && item.Timestamp <= to)
-                    .Cast<TemporalItem<TValue>>()
+                    .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
+                    .OrderBy(i => i.Timestamp)
                     .ToList();
             }
-            return results;
         }
 
         /// <summary>
@@ -123,20 +126,160 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
+                // Must NOT break early: the set is ordered by (Priority, Timestamp), not by Timestamp alone
                 var toRemove = new List<QueueItem>();
-
                 foreach (var item in _set)
                 {
                     if (item.Timestamp < cutoff)
                         toRemove.Add(item);
-                    else
-                        break; // since sorted by timestamp as tiebreaker, can stop early
+                }
+                foreach (var item in toRemove)
+                    _set.Remove(item);
+            }
+        }
+
+        /// <summary>
+        /// Returns the time span between the earliest and latest timestamps in the queue.
+        /// Returns <see cref="TimeSpan.Zero"/> if the queue is empty.
+        /// </summary>
+        public TimeSpan GetTimeSpan()
+        {
+            lock (_lock)
+            {
+                if (_set.Count == 0) return TimeSpan.Zero;
+
+                DateTime minTs = DateTime.MaxValue;
+                DateTime maxTs = DateTime.MinValue;
+
+                foreach (var item in _set)
+                {
+                    if (item.Timestamp < minTs) minTs = item.Timestamp;
+                    if (item.Timestamp > maxTs) maxTs = item.Timestamp;
                 }
 
+                return maxTs - minTs;
+            }
+        }
+
+        /// <summary>
+        /// Counts the number of items with timestamps within the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Start of the time range (inclusive).</param>
+        /// <param name="to">End of the time range (inclusive).</param>
+        /// <returns>The number of items within the specified range.</returns>
+        public int CountInRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                return _set.Count(i => i.Timestamp >= from && i.Timestamp <= to);
+            }
+        }
+
+        /// <summary>
+        /// Removes all items from the queue.
+        /// </summary>
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _set.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Start of the time range (inclusive).</param>
+        /// <param name="to">End of the time range (inclusive).</param>
+        public void RemoveRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                var toRemove = _set.Where(i => i.Timestamp >= from && i.Timestamp <= to).ToList();
                 foreach (var item in toRemove)
-                {
                     _set.Remove(item);
+            }
+        }
+
+        /// <summary>
+        /// Gets the most recent item by timestamp, or <c>null</c> if the queue is empty.
+        /// </summary>
+        /// <returns>The latest temporal item, or null if empty.</returns>
+        public TemporalItem<TValue>? GetLatest()
+        {
+            lock (_lock)
+            {
+                if (_set.Count == 0) return null;
+                QueueItem? latest = null;
+
+                foreach (var item in _set)
+                {
+                    if (latest is null || item.Timestamp > latest.Timestamp)
+                        latest = item;
                 }
+
+                return latest is null ? null : new TemporalItem<TValue>(latest.Value, latest.Timestamp);
+            }
+        }
+
+        /// <summary>
+        /// Gets the oldest item by timestamp, or <c>null</c> if the queue is empty.
+        /// </summary>
+        /// <returns>The earliest temporal item, or null if empty.</returns>
+        public TemporalItem<TValue>? GetEarliest()
+        {
+            lock (_lock)
+            {
+                if (_set.Count == 0) return null;
+                QueueItem? earliest = null;
+
+                foreach (var item in _set)
+                {
+                    if (earliest is null || item.Timestamp < earliest.Timestamp)
+                        earliest = item;
+                }
+
+                return earliest is null ? null : new TemporalItem<TValue>(earliest.Value, earliest.Timestamp);
+            }
+        }
+
+        /// <summary>
+        /// Returns all items strictly before the specified time (<paramref name="time"/>).
+        /// </summary>
+        /// <param name="time">The exclusive upper bound timestamp.</param>
+        /// <returns>An enumerable of items with timestamp &lt; <paramref name="time"/>.</returns>
+        public IEnumerable<TemporalItem<TValue>> GetBefore(DateTime time)
+        {
+            lock (_lock)
+            {
+                return _set
+                    .Where(i => i.Timestamp < time)
+                    .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
+                    .OrderBy(i => i.Timestamp)
+                    .ToList();
+            }
+        }
+
+        /// <summary>
+        /// Returns all items strictly after the specified time (<paramref name="time"/>).
+        /// </summary>
+        /// <param name="time">The exclusive lower bound timestamp.</param>
+        /// <returns>An enumerable of items with timestamp &gt; <paramref name="time"/>.</returns>
+        public IEnumerable<TemporalItem<TValue>> GetAfter(DateTime time)
+        {
+            lock (_lock)
+            {
+                return _set
+                    .Where(i => i.Timestamp > time)
+                    .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
+                    .OrderBy(i => i.Timestamp)
+                    .ToList();
             }
         }
 

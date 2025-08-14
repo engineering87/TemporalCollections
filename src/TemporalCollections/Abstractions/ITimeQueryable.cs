@@ -18,5 +18,46 @@ namespace TemporalCollections.Abstractions
         /// Removes all items older than the specified cutoff date.
         /// </summary>
         void RemoveOlderThan(DateTime cutoff);
+
+        /// <summary>
+        /// Returns the total timespan covered by items in the collection
+        /// (difference between earliest and latest timestamp), or TimeSpan.Zero if empty.
+        /// </summary>
+        TimeSpan GetTimeSpan();
+
+        /// <summary>
+        /// Returns the number of items in the specified time range.
+        /// </summary>
+        int CountInRange(DateTime from, DateTime to);
+
+        /// <summary>
+        /// Removes all items from the collection.
+        /// </summary>
+        void Clear();
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the specified range [from, to].
+        /// </summary>
+        void RemoveRange(DateTime from, DateTime to);
+
+        /// <summary>
+        /// Retrieves the latest item based on timestamp, or null if empty.
+        /// </summary>
+        TemporalItem<T>? GetLatest();
+
+        /// <summary>
+        /// Retrieves the earliest item based on timestamp, or null if empty.
+        /// </summary>
+        TemporalItem<T>? GetEarliest();
+
+        /// <summary>
+        /// Retrieves all items with timestamp before the specified time (exclusive).
+        /// </summary>
+        IEnumerable<TemporalItem<T>> GetBefore(DateTime time);
+
+        /// <summary>
+        /// Retrieves all items with timestamp after the specified time (exclusive).
+        /// </summary>
+        IEnumerable<TemporalItem<T>> GetAfter(DateTime time);
     }
 }

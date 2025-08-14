@@ -44,18 +44,21 @@ namespace TemporalCollections.Collections
         /// </returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
             lock (_lock)
             {
-                int startIndex = FindFirstIndexAtOrAfter(from);
-                var results = new List<TemporalItem<T>>();
+                if (_items.Count == 0) return Array.Empty<TemporalItem<T>>();
 
-                for (int i = startIndex; i < _items.Count; i++)
-                {
-                    if (_items[i].Timestamp > to) break;
-                    results.Add(_items[i]);
-                }
+                int start = FindFirstIndexAtOrAfter(from);
+                if (start >= _items.Count) return Array.Empty<TemporalItem<T>>();
 
-                return results;
+                int end = FindLastIndexAtOrBefore(to);
+                if (end < start) return Array.Empty<TemporalItem<T>>();
+
+                int count = end - start + 1;
+                return _items.GetRange(start, count);
             }
         }
 
@@ -69,11 +72,10 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
+                if (_items.Count == 0) return;
                 int index = FindFirstIndexAtOrAfter(cutoff);
                 if (index > 0)
-                {
                     _items.RemoveRange(0, index);
-                }
             }
         }
 
@@ -119,5 +121,190 @@ namespace TemporalCollections.Collections
 
             return result;
         }
+
+        /// <summary>
+        /// Returns the total timespan covered by items in the collection,
+        /// computed as (latest.Timestamp - earliest.Timestamp). Returns
+        /// <see cref="TimeSpan.Zero"/> if the list is empty or contains a single item.
+        /// </summary>
+        public TimeSpan GetTimeSpan()
+        {
+            lock (_lock)
+            {
+                if (_items.Count < 2) return TimeSpan.Zero;
+                var span = _items[^1].Timestamp - _items[0].Timestamp;
+                return span < TimeSpan.Zero ? TimeSpan.Zero : span;
+            }
+        }
+
+        /// <summary>
+        /// Returns the number of items with timestamps in the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public int CountInRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                if (_items.Count == 0) return 0;
+
+                int start = FindFirstIndexAtOrAfter(from);
+                if (start >= _items.Count) return 0;
+
+                int end = FindLastIndexAtOrBefore(to);
+                if (end < start) return 0;
+
+                return end - start + 1;
+            }
+        }
+
+        /// <summary>
+        /// Removes all items from the collection.
+        /// </summary>
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _items.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public void RemoveRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                if (_items.Count == 0) return;
+
+                int start = FindFirstIndexAtOrAfter(from);
+                if (start >= _items.Count) return;
+
+                int end = FindLastIndexAtOrBefore(to);
+                if (end < start) return;
+
+                int count = end - start + 1;
+                _items.RemoveRange(start, count);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the latest item by timestamp, or null if the collection is empty.
+        /// </summary>
+        public TemporalItem<T>? GetLatest()
+        {
+            lock (_lock)
+            {
+                if (_items.Count == 0) return null;
+                return _items[^1];
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the earliest item by timestamp, or null if the collection is empty.
+        /// </summary>
+        public TemporalItem<T>? GetEarliest()
+        {
+            lock (_lock)
+            {
+                if (_items.Count == 0) return null;
+                return _items[0];
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly before <paramref name="time"/>.
+        /// </summary>
+        /// <param name="time">Exclusive upper bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
+        {
+            lock (_lock)
+            {
+                int idx = FindFirstIndexAtOrAfter(time); // first >= time
+                if (idx <= 0) return [];
+                return _items.GetRange(0, idx);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly after <paramref name="time"/>.
+        /// </summary>
+        /// <param name="time">Exclusive lower bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
+        {
+            lock (_lock)
+            {
+                int idx = FindFirstIndexAfter(time); // first > time
+                if (idx >= _items.Count) return [];
+                return _items.GetRange(idx, _items.Count - idx);
+            }
+        }
+
+        #region Internal helpers
+
+        /// <summary>
+        /// Finds the index of the first element with a timestamp strictly greater than <paramref name="target"/>.
+        /// Returns <see cref="Count"/> if no such element exists.
+        /// </summary>
+        private int FindFirstIndexAfter(DateTime target)
+        {
+            int left = 0;
+            int right = _items.Count - 1;
+            int result = _items.Count;
+
+            while (left <= right)
+            {
+                int mid = (left + right) / 2;
+                if (_items[mid].Timestamp > target)
+                {
+                    result = mid;
+                    right = mid - 1;
+                }
+                else
+                {
+                    left = mid + 1;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Finds the index of the last element with a timestamp less than or equal to <paramref name="target"/>.
+        /// Returns -1 if all elements are greater than <paramref name="target"/>.
+        /// </summary>
+        private int FindLastIndexAtOrBefore(DateTime target)
+        {
+            int left = 0;
+            int right = _items.Count - 1;
+            int result = -1;
+
+            while (left <= right)
+            {
+                int mid = (left + right) / 2;
+                if (_items[mid].Timestamp <= target)
+                {
+                    result = mid;
+                    left = mid + 1;
+                }
+                else
+                {
+                    right = mid - 1;
+                }
+            }
+
+            return result;
+        }
+
+        #endregion
     }
 }

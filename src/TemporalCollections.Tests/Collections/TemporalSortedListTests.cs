@@ -13,8 +13,7 @@ namespace TemporalCollections.Tests.Collections
 
             var now = DateTime.UtcNow;
 
-            // Aggiungo gli elementi in ordine sparso di timestamp
-            list.Add("first");  // timestamp = now (approx)
+            list.Add("first");
             Thread.Sleep(10);
             list.Add("second");
             Thread.Sleep(10);
@@ -23,7 +22,7 @@ namespace TemporalCollections.Tests.Collections
             var snapshot = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
 
             Assert.Equal(3, snapshot.Count);
-            // Verifico che siano ordinati per timestamp crescente
+
             for (int i = 1; i < snapshot.Count; i++)
             {
                 Assert.True(snapshot[i].Timestamp >= snapshot[i - 1].Timestamp);
@@ -59,22 +58,35 @@ namespace TemporalCollections.Tests.Collections
         {
             var list = new TemporalSortedList<string>();
 
-            var now = DateTime.UtcNow;
-
             list.Add("a");
-            Thread.Sleep(10);
+            Thread.Sleep(5);
             list.Add("b");
-            Thread.Sleep(10);
+            Thread.Sleep(5);
             list.Add("c");
 
-            var cutoff = now.AddMilliseconds(15);
+            // Take a stable, ordered snapshot to get exact boundaries.
+            var snap = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                           .OrderBy(i => i.Timestamp)
+                           .ToList();
+
+            Assert.Equal(3, snap.Count);
+
+            var tA = snap[0].Timestamp;
+            var tB = snap[1].Timestamp;
+            var tC = snap[2].Timestamp;
+
+            // Choose a cutoff strictly between A and B so only "a" is older than cutoff.
+            // Using the midpoint guarantees tA < cutoff < tB, avoiding timing flakiness.
+            var cutoff = new DateTime((tA.Ticks + tB.Ticks) / 2, DateTimeKind.Utc);
+
             list.RemoveOlderThan(cutoff);
 
-            var remaining = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            var remaining = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                                .OrderBy(i => i.Timestamp)
+                                .Select(i => i.Value)
+                                .ToList();
 
-            Assert.DoesNotContain("a", remaining);
-            Assert.Contains("b", remaining);
-            Assert.Contains("c", remaining);
+            Assert.Equal(new[] { "b", "c" }, remaining);
         }
 
         [Fact]

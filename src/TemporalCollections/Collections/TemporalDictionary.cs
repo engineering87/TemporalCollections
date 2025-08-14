@@ -42,14 +42,20 @@ namespace TemporalCollections.Collections
         /// A collection of <see cref="TemporalItem{TValue}"/> instances matching the key and timestamp range.
         /// Returns an empty collection if the key is not found or no items fall within the range.
         /// </returns>
+        // Aggiungi validazione e ordering per la variante per-chiave
         public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTime from, DateTime to)
         {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
             if (_dict.TryGetValue(key, out var list))
             {
                 lock (list)
                 {
+                    // Order by timestamp to provide deterministic results
                     return list
                         .Where(item => item.Timestamp >= from && item.Timestamp <= to)
+                        .OrderBy(item => item.Timestamp)
                         .ToList();
                 }
             }
@@ -61,18 +67,14 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void RemoveOlderThan(DateTime cutoff)
         {
-            foreach (var key in _dict.Keys)
+            foreach (var kvp in _dict)
             {
-                if (_dict.TryGetValue(key, out var list))
+                var list = kvp.Value;
+                lock (list)
                 {
-                    lock (list)
-                    {
-                        list.RemoveAll(item => item.Timestamp < cutoff);
-                        if (list.Count == 0)
-                        {
-                            _dict.TryRemove(key, out _);
-                        }
-                    }
+                    list.RemoveAll(item => item.Timestamp < cutoff);
+                    if (list.Count == 0)
+                        _dict.TryRemove(kvp.Key, out _);
                 }
             }
         }
@@ -104,6 +106,9 @@ namespace TemporalCollections.Collections
         /// </returns>
         public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTime from, DateTime to)
         {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
             foreach (var kvp in _dict)
@@ -122,9 +127,218 @@ namespace TemporalCollections.Collections
                 }
             }
 
+            // Ensure deterministic ordering across keys
+            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
             return results;
         }
 
         #endregion
+
+        /// <summary>
+        /// Returns the time span between the earliest and the latest timestamp across all stored items.
+        /// Returns <see cref="TimeSpan.Zero"/> if the dictionary is empty.
+        /// </summary>
+        public TimeSpan GetTimeSpan()
+        {
+            bool any = false;
+            DateTime min = DateTime.MaxValue;
+            DateTime max = DateTime.MinValue;
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    foreach (var it in list)
+                    {
+                        any = true;
+                        var ts = it.Timestamp;
+                        if (ts < min) min = ts;
+                        if (ts > max) max = ts;
+                    }
+                }
+            }
+
+            if (!any || min >= max) return TimeSpan.Zero;
+            var span = max - min;
+            return span < TimeSpan.Zero ? TimeSpan.Zero : span;
+        }
+
+        /// <summary>
+        /// Counts how many items across all keys have a timestamp within the inclusive range
+        /// from <paramref name="from"/> to <paramref name="to"/>.
+        /// </summary>
+        public int CountInRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            var count = 0;
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    count += list.Count(i => i.Timestamp >= from && i.Timestamp <= to);
+                }
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Removes all keys and all their timestamped values from the dictionary.
+        /// </summary>
+        public void Clear()
+        {
+            _dict.Clear();
+        }
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the inclusive range
+        /// from <paramref name="from"/> to <paramref name="to"/> across all keys.
+        /// Keys left with no items are removed as well.
+        /// </summary>
+        public void RemoveRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    list.RemoveAll(i => i.Timestamp >= from && i.Timestamp <= to);
+                    if (list.Count == 0)
+                        _dict.TryRemove(kvp.Key, out _);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns the latest (most recent) item across all keys, or <c>null</c> if empty.
+        /// The returned item contains the original key/value as a <see cref="KeyValuePair{TKey,TValue}"/>.
+        /// </summary>
+        public TemporalItem<KeyValuePair<TKey, TValue>>? GetLatest()
+        {
+            DateTime bestTs = DateTime.MinValue;
+            TKey? bestKey = default!;
+            TValue? bestVal = default!;
+            bool found = false;
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    foreach (var it in list)
+                    {
+                        if (!found || it.Timestamp > bestTs)
+                        {
+                            bestTs = it.Timestamp;
+                            bestKey = kvp.Key;
+                            bestVal = it.Value;
+                            found = true;
+                        }
+                    }
+                }
+            }
+
+            return found
+                ? new TemporalItem<KeyValuePair<TKey, TValue>>(new KeyValuePair<TKey, TValue>(bestKey, bestVal), bestTs)
+                : null;
+        }
+
+        /// <summary>
+        /// Returns the earliest (oldest) item across all keys, or <c>null</c> if empty.
+        /// The returned item contains the original key/value as a <see cref="KeyValuePair{TKey,TValue}"/>.
+        /// </summary>
+        public TemporalItem<KeyValuePair<TKey, TValue>>? GetEarliest()
+        {
+            DateTime bestTs = DateTime.MaxValue;
+            TKey? bestKey = default!;
+            TValue? bestVal = default!;
+            bool found = false;
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    foreach (var it in list)
+                    {
+                        if (!found || it.Timestamp < bestTs)
+                        {
+                            bestTs = it.Timestamp;
+                            bestKey = kvp.Key;
+                            bestVal = it.Value;
+                            found = true;
+                        }
+                    }
+                }
+            }
+
+            return found
+                ? new TemporalItem<KeyValuePair<TKey, TValue>>(new KeyValuePair<TKey, TValue>(bestKey, bestVal), bestTs)
+                : null;
+        }
+
+        /// <summary>
+        /// Retrieves all items strictly before the specified <paramref name="time"/> across all keys.
+        /// The returned items wrap the original key/value.
+        /// </summary>
+        public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetBefore(DateTime time)
+        {
+            var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    foreach (var item in list)
+                    {
+                        if (item.Timestamp < time)
+                        {
+                            results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
+                                new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
+                                item.Timestamp));
+                        }
+                    }
+                }
+            }
+
+            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+            return results;
+        }
+
+        /// <summary>
+        /// Retrieves all items strictly after the specified <paramref name="time"/> across all keys.
+        /// The returned items wrap the original key/value.
+        /// </summary>
+        public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetAfter(DateTime time)
+        {
+            var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    foreach (var item in list)
+                    {
+                        if (item.Timestamp > time)
+                        {
+                            results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
+                                new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
+                                item.Timestamp));
+                        }
+                    }
+                }
+            }
+
+            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+            return results;
+        }
     }
 }

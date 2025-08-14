@@ -99,11 +99,23 @@ namespace TemporalCollections.Collections
         /// <returns>An enumerable of temporal items with timestamps between <paramref name="from"/> and <paramref name="to"/>.</returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
             lock (_lock)
             {
-                return GetSnapshot()
-                    .Where(item => item.Timestamp >= from && item.Timestamp <= to)
-                    .ToList();
+                if (_count == 0) return Array.Empty<TemporalItem<T>>();
+
+                var list = new List<TemporalItem<T>>();
+                IterateOrdered(item =>
+                {
+                    var ts = item.Timestamp;
+                    if (ts >= from && ts <= to)
+                        list.Add(item);
+                    // Small fast-path: since items are chronological, we *could* break when ts > to.
+                    // We avoid early-break here to keep IterateOrdered simple and side-effect-free.
+                });
+                return list;
             }
         }
 
@@ -116,19 +128,211 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                var items = GetSnapshot()
-                    .Where(item => item.Timestamp >= cutoff)
-                    .ToArray();
+                if (_count == 0) return;
 
-                _count = Math.Min(items.Length, Capacity);
-                _head = _count % Capacity;
-
-                Array.Clear(_buffer, 0, _buffer.Length);
-                for (int i = 0; i < _count; i++)
+                var kept = new List<TemporalItem<T>>(_count);
+                IterateOrdered(item =>
                 {
-                    _buffer[i] = items[i];
-                }
+                    if (item.Timestamp >= cutoff)
+                        kept.Add(item);
+                });
+
+                RebuildFromOrdered(kept);
             }
         }
+
+        /// <summary>
+        /// Returns the total timespan covered by items in the buffer,
+        /// computed as (latest.Timestamp - earliest.Timestamp).
+        /// Returns <see cref="TimeSpan.Zero"/> if there are fewer than two items.
+        /// </summary>
+        public TimeSpan GetTimeSpan()
+        {
+            lock (_lock)
+            {
+                if (_count < 2) return TimeSpan.Zero;
+
+                var earliest = GetAtOrderedIndex(0);
+                var latest = GetAtOrderedIndex(_count - 1);
+
+                var span = latest.Timestamp - earliest.Timestamp;
+                return span < TimeSpan.Zero ? TimeSpan.Zero : span;
+            }
+        }
+
+        /// <summary>
+        /// Returns the number of items with timestamps in the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public int CountInRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                if (_count == 0) return 0;
+
+                int cnt = 0;
+                IterateOrdered((item) =>
+                {
+                    var ts = item.Timestamp;
+                    if (ts >= from && ts <= to) cnt++;
+                });
+                return cnt;
+            }
+        }
+
+        /// <summary>
+        /// Removes all items from the buffer.
+        /// </summary>
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                Array.Clear(_buffer, 0, _buffer.Length);
+                _head = 0;
+                _count = 0;
+            }
+        }
+
+        /// <summary>
+        /// Removes all items whose timestamps fall within the inclusive range [from, to].
+        /// </summary>
+        /// <param name="from">Range start (inclusive).</param>
+        /// <param name="to">Range end (inclusive).</param>
+        public void RemoveRange(DateTime from, DateTime to)
+        {
+            if (to < from)
+                throw new ArgumentException("to must be >= from", nameof(to));
+
+            lock (_lock)
+            {
+                if (_count == 0) return;
+
+                var kept = new List<TemporalItem<T>>(_count);
+                IterateOrdered((item) =>
+                {
+                    var ts = item.Timestamp;
+                    if (ts < from || ts > to)
+                        kept.Add(item);
+                });
+
+                RebuildFromOrdered(kept);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the latest (most recent) item, or null if the buffer is empty.
+        /// </summary>
+        public TemporalItem<T>? GetLatest()
+        {
+            lock (_lock)
+            {
+                if (_count == 0) return null;
+                int lastIdx = (_head - 1 + Capacity) % Capacity;
+                return _buffer[lastIdx];
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the earliest (oldest) item, or null if the buffer is empty.
+        /// </summary>
+        public TemporalItem<T>? GetEarliest()
+        {
+            lock (_lock)
+            {
+                if (_count == 0) return null;
+                int firstIdx = (_head - _count + Capacity) % Capacity;
+                return _buffer[firstIdx];
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly before <paramref name="time"/>.
+        /// The returned items are ordered from oldest to newest.
+        /// </summary>
+        /// <param name="time">Exclusive upper bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
+        {
+            lock (_lock)
+            {
+                if (_count == 0) return [];
+
+                var list = new List<TemporalItem<T>>();
+                IterateOrdered((item) =>
+                {
+                    if (item.Timestamp < time)
+                        list.Add(item);
+                });
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// Retrieves all items with timestamp strictly after <paramref name="time"/>.
+        /// The returned items are ordered from oldest to newest.
+        /// </summary>
+        /// <param name="time">Exclusive lower bound for the timestamp.</param>
+        public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
+        {
+            lock (_lock)
+            {
+                if (_count == 0) return [];
+
+                var list = new List<TemporalItem<T>>();
+                IterateOrdered((item) =>
+                {
+                    if (item.Timestamp > time)
+                        list.Add(item);
+                });
+                return list;
+            }
+        }
+
+        #region Internal helpers
+
+        /// <summary>
+        /// Iterates items in chronological order (oldest to newest) and invokes the provided action.
+        /// Caller must hold the lock.
+        /// </summary>
+        private void IterateOrdered(Action<TemporalItem<T>> action)
+        {
+            int start = (_head - _count + Capacity) % Capacity;
+            for (int i = 0; i < _count; i++)
+            {
+                int idx = (start + i) % Capacity;
+                action(_buffer[idx]);
+            }
+        }
+
+        /// <summary>
+        /// Gets the item at the given logical ordered position (0.._count-1), oldest-first.
+        /// Caller must hold the lock.
+        /// </summary>
+        private TemporalItem<T> GetAtOrderedIndex(int orderedIndex)
+        {
+            int start = (_head - _count + Capacity) % Capacity;
+            int idx = (start + orderedIndex) % Capacity;
+            return _buffer[idx];
+        }
+
+        /// <summary>
+        /// Rebuilds the ring buffer from an already ordered (oldest-to-newest) list.
+        /// Caller must hold the lock.
+        /// </summary>
+        private void RebuildFromOrdered(List<TemporalItem<T>> orderedItems)
+        {
+            Array.Clear(_buffer, 0, _buffer.Length);
+
+            _count = Math.Min(orderedItems.Count, Capacity);
+            _head = _count % Capacity;
+
+            for (int i = 0; i < _count; i++)
+                _buffer[i] = orderedItems[i];
+        }
+
+        #endregion
     }
 }
