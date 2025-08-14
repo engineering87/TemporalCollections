@@ -66,6 +66,30 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **RemoveOlderThan(DateTime cutoff)**  
   Removes all items with timestamps strictly older than the specified `cutoff` time (`Timestamp < cutoff`). This method is useful for pruning outdated data and maintaining collection size.
 
+- **CountInRange(DateTime from, DateTime to)**  
+  Returns the number of items with timestamps in the inclusive range `[from, to]`. Throws if to < from.
+
+- **GetTimeSpan()**  
+  Returns `latest.Timestamp - earliest.Timestamp`. Returns `TimeSpan.Zero` if the collection is empty or has a single item.
+
+- **Clear()**  
+  Removes all items from the collection.
+
+- **RemoveRange(DateTime from, DateTime to)**  
+  Removes all items with timestamps in the inclusive range `[from, to]`. Throws if `to < from`.
+
+- **GetLatest()**  
+  Returns the most recent item (max timestamp), or null if empty.
+
+- **GetEarliest()**  
+  Returns the oldest item (min timestamp), or null if empty.
+
+- **GetBefore(DateTime time)**  
+  Returns all items with `Timestamp < time` (strictly before), ordered by ascending timestamp.
+
+- **GetAfter(DateTime time)**  
+  Returns all items with `Timestamp > time` (strictly after), ordered by ascending timestamp.
+
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
 
 ## Monotonic Timestamp Guarantee
@@ -83,6 +107,12 @@ This approach ensures:
 - **Thread safety:** The mechanism works correctly across multiple threads without race conditions.
 
 By enforcing this monotonic timestamp ordering, the temporal collections can rely on consistent time-based queries and maintain correct chronological order of items.
+
+## Notes
+- **Deterministic ordering**: query results are returned in ascending timestamp order.
+- **Snapshot semantics**: methods that return enumerables/lists provide a stable snapshot at call time.
+- **Thread-safety**: all operations are designed to be thread-safe per collection.
+- **Intervals**: for interval-based collections, the Timestamp used by this interface refers to the interval start.
 
 ### Contributing
 Thank you for considering to help out with the source code!
