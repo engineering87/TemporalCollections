@@ -1,5 +1,6 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+using System.Runtime.CompilerServices;
 
 namespace TemporalCollections.Models
 {
@@ -40,24 +41,43 @@ namespace TemporalCollections.Models
         }
 
         /// <summary>
-        /// Provides an <see cref="IComparer{T}"/> for comparing two temporal items
-        /// based on their <see cref="Timestamp"/> values.
+        /// IComparer that orders items by Timestamp ascending and uses stable tie-breakers
+        /// to avoid treating distinct items as duplicates in ordered sets.
         /// </summary>
-        public static IComparer<TemporalItem<T>> TimestampComparer { get; } = new TimestampComparerImpl();
+        public static IComparer<TemporalItem<T>> TimestampComparer { get; } = new StableTimestampComparer();
 
-        /// <summary>
-        /// Private comparer implementation that compares <see cref="TemporalItem{T}"/> instances
-        /// by their timestamps in ascending order.
-        /// </summary>
-        private class TimestampComparerImpl : IComparer<TemporalItem<T>>
+        private sealed class StableTimestampComparer : IComparer<TemporalItem<T>>
         {
-            /// <inheritdoc />
             public int Compare(TemporalItem<T>? x, TemporalItem<T>? y)
             {
                 if (ReferenceEquals(x, y)) return 0;
                 if (x is null) return -1;
                 if (y is null) return 1;
-                return x.Timestamp.CompareTo(y.Timestamp);
+
+                // Primary: timestamp
+                int c = x.Timestamp.CompareTo(y.Timestamp);
+                if (c != 0) return c;
+
+                // Secondary: value if comparable (generic first)
+                if (x.Value is IComparable<T> gen && y.Value is not null)
+                {
+                    c = gen.CompareTo(y.Value);
+                    if (c != 0) return c;
+                }
+                else if (x.Value is IComparable nong && y.Value is not null)
+                {
+                    c = nong.CompareTo(y.Value);
+                    if (c != 0) return c;
+                }
+
+                // Final: runtime identity to guarantee a strict weak ordering
+                // (prevents SortedSet from dropping distinct items as duplicates)
+                int hx = RuntimeHelpers.GetHashCode(x);
+                int hy = RuntimeHelpers.GetHashCode(y);
+                if (hx != hy) return hx.CompareTo(hy);
+
+                // Extremely unlikely: same runtime identity (or same reference)
+                return 0;
             }
         }
     }
