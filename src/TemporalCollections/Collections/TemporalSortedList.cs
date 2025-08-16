@@ -2,12 +2,14 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
+using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
     /// <summary>
     /// Thread-safe sorted list of <see cref="TemporalItem{T}"/>, ordered by timestamp ascending.
     /// Implements <see cref="ITimeQueryable{T}"/> for time-based querying and cleanup.
+    /// Public method signatures use DateTime, but all comparisons are done on DateTimeOffset (UTC) internally.
     /// </summary>
     /// <typeparam name="T">The type of items stored in the list.</typeparam>
     public class TemporalSortedList<T> : ITimeQueryable<T>
@@ -15,16 +17,18 @@ namespace TemporalCollections.Collections
         private readonly List<TemporalItem<T>> _items = [];
         private readonly Lock _lock = new();
 
+        // Centralize how Unspecified DateTimes are handled.
+        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
+
         /// <summary>
         /// Adds a new item to the list while preserving chronological order.
         /// </summary>
-        /// <param name="item">The value to wrap in a <see cref="TemporalItem{T}"/> and store.</param>
         public void Add(T item)
         {
             var temporalItem = TemporalItem<T>.Create(item);
             lock (_lock)
             {
-                // Binary search to find insertion index
+                // Binary search to find insertion index using the item's comparer (by DateTimeOffset)
                 int index = _items.BinarySearch(temporalItem, TemporalItem<T>.TimestampComparer);
                 if (index < 0) index = ~index;
                 _items.Insert(index, temporalItem);
@@ -32,29 +36,21 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Retrieves all temporal items in the sorted list whose timestamps
-        /// are within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
-        /// The list is locked during the operation for thread safety.
+        /// Retrieves all temporal items in the inclusive range [from, to], ordered by timestamp.
         /// </summary>
-        /// <param name="from">The start of the timestamp range (inclusive).</param>
-        /// <param name="to">The end of the timestamp range (inclusive).</param>
-        /// <returns>
-        /// A list of <see cref="TemporalItem{T}"/> instances ordered by timestamp,
-        /// whose timestamps fall within the specified range.
-        /// </returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 if (_items.Count == 0) return Array.Empty<TemporalItem<T>>();
 
-                int start = FindFirstIndexAtOrAfter(from);
+                int start = FindFirstIndexAtOrAfterTicks(f);
                 if (start >= _items.Count) return Array.Empty<TemporalItem<T>>();
 
-                int end = FindLastIndexAtOrBefore(to);
+                int end = FindLastIndexAtOrBeforeTicks(t);
                 if (end < start) return Array.Empty<TemporalItem<T>>();
 
                 int count = end - start + 1;
@@ -63,19 +59,19 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Removes all temporal items from the sorted list whose timestamps
-        /// are earlier than the specified <paramref name="cutoff"/> timestamp.
-        /// The operation is thread-safe and locks the list during modification.
+        /// Removes all items with Timestamp &lt; cutoff (exclusive).
         /// </summary>
-        /// <param name="cutoff">The cutoff timestamp; items with timestamps less than this are removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
+            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+
             lock (_lock)
             {
                 if (_items.Count == 0) return;
-                int index = FindFirstIndexAtOrAfter(cutoff);
-                if (index > 0)
-                    _items.RemoveRange(0, index);
+
+                // first index with ts >= cutoff  -> remove [0, idx)
+                int idx = FindFirstIndexAtOrAfterTicks(c);
+                if (idx > 0) _items.RemoveRange(0, idx);
             }
         }
 
@@ -84,55 +80,21 @@ namespace TemporalCollections.Collections
         /// </summary>
         public int Count
         {
-            get
-            {
-                lock (_lock)
-                {
-                    return _items.Count;
-                }
+            get 
+            { 
+                lock (_lock) return _items.Count; 
             }
         }
 
         /// <summary>
-        /// Finds the index of the first element with a timestamp greater than or equal to <paramref name="target"/>.
-        /// Returns <see cref="Count"/> if no such element exists.
-        /// </summary>
-        /// <param name="target">The timestamp to search for.</param>
-        /// <returns>The index of the first matching element, or <see cref="Count"/> if none found.</returns>
-        private int FindFirstIndexAtOrAfter(DateTime target)
-        {
-            int left = 0;
-            int right = _items.Count - 1;
-            int result = _items.Count;
-
-            while (left <= right)
-            {
-                int mid = (left + right) / 2;
-                if (_items[mid].Timestamp >= target)
-                {
-                    result = mid;
-                    right = mid - 1;
-                }
-                else
-                {
-                    left = mid + 1;
-                }
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Returns the total timespan covered by items in the collection,
-        /// computed as (latest.Timestamp - earliest.Timestamp). Returns
-        /// <see cref="TimeSpan.Zero"/> if the list is empty or contains a single item.
+        /// Returns the total timespan covered by items, or TimeSpan.Zero if fewer than two.
         /// </summary>
         public TimeSpan GetTimeSpan()
         {
             lock (_lock)
             {
                 if (_items.Count < 2) return TimeSpan.Zero;
-                var span = _items[^1].Timestamp - _items[0].Timestamp;
+                var span = _items[^1].Timestamp - _items[0].Timestamp; // DateTimeOffset subtraction → TimeSpan
                 return span < TimeSpan.Zero ? TimeSpan.Zero : span;
             }
         }
@@ -140,21 +102,19 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the number of items with timestamps in the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Range start (inclusive).</param>
-        /// <param name="to">Range end (inclusive).</param>
         public int CountInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 if (_items.Count == 0) return 0;
 
-                int start = FindFirstIndexAtOrAfter(from);
+                int start = FindFirstIndexAtOrAfterTicks(f);
                 if (start >= _items.Count) return 0;
 
-                int end = FindLastIndexAtOrBefore(to);
+                int end = FindLastIndexAtOrBeforeTicks(t);
                 if (end < start) return 0;
 
                 return end - start + 1;
@@ -166,30 +126,26 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Clear()
         {
-            lock (_lock)
-            {
+            lock (_lock) 
                 _items.Clear();
-            }
         }
 
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Range start (inclusive).</param>
-        /// <param name="to">Range end (inclusive).</param>
         public void RemoveRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 if (_items.Count == 0) return;
 
-                int start = FindFirstIndexAtOrAfter(from);
+                int start = FindFirstIndexAtOrAfterTicks(f);
                 if (start >= _items.Count) return;
 
-                int end = FindLastIndexAtOrBefore(to);
+                int end = FindLastIndexAtOrBeforeTicks(t);
                 if (end < start) return;
 
                 int count = end - start + 1;
@@ -224,12 +180,14 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Retrieves all items with timestamp strictly before <paramref name="time"/>.
         /// </summary>
-        /// <param name="time">Exclusive upper bound for the timestamp.</param>
         public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                int idx = FindFirstIndexAtOrAfter(time); // first >= time
+                // first index with ts >= cutoff  → take [0, idx)
+                int idx = FindFirstIndexAtOrAfterTicks(cutoff);
                 if (idx <= 0) return [];
                 return _items.GetRange(0, idx);
             }
@@ -238,24 +196,26 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Retrieves all items with timestamp strictly after <paramref name="time"/>.
         /// </summary>
-        /// <param name="time">Exclusive lower bound for the timestamp.</param>
         public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                int idx = FindFirstIndexAfter(time); // first > time
+                // first index with ts > cutoff → take [idx, end)
+                int idx = FindFirstIndexAfterTicks(cutoff);
                 if (idx >= _items.Count) return [];
                 return _items.GetRange(idx, _items.Count - idx);
             }
         }
 
-        #region Internal helpers
+        #region Internal helpers (binary searches on UtcTicks)
 
         /// <summary>
-        /// Finds the index of the first element with a timestamp strictly greater than <paramref name="target"/>.
-        /// Returns <see cref="Count"/> if no such element exists.
+        /// Finds the index of the first element with timestamp.UtcTicks >= targetTicks.
+        /// Returns Count if no such element exists.
         /// </summary>
-        private int FindFirstIndexAfter(DateTime target)
+        private int FindFirstIndexAtOrAfterTicks(long targetTicks)
         {
             int left = 0;
             int right = _items.Count - 1;
@@ -264,7 +224,9 @@ namespace TemporalCollections.Collections
             while (left <= right)
             {
                 int mid = (left + right) / 2;
-                if (_items[mid].Timestamp > target)
+                long midTicks = _items[mid].Timestamp.UtcTicks;
+
+                if (midTicks >= targetTicks)
                 {
                     result = mid;
                     right = mid - 1;
@@ -274,15 +236,42 @@ namespace TemporalCollections.Collections
                     left = mid + 1;
                 }
             }
-
             return result;
         }
 
         /// <summary>
-        /// Finds the index of the last element with a timestamp less than or equal to <paramref name="target"/>.
-        /// Returns -1 if all elements are greater than <paramref name="target"/>.
+        /// Finds the index of the first element with timestamp.UtcTicks > targetTicks.
+        /// Returns Count if no such element exists.
         /// </summary>
-        private int FindLastIndexAtOrBefore(DateTime target)
+        private int FindFirstIndexAfterTicks(long targetTicks)
+        {
+            int left = 0;
+            int right = _items.Count - 1;
+            int result = _items.Count;
+
+            while (left <= right)
+            {
+                int mid = (left + right) / 2;
+                long midTicks = _items[mid].Timestamp.UtcTicks;
+
+                if (midTicks > targetTicks)
+                {
+                    result = mid;
+                    right = mid - 1;
+                }
+                else
+                {
+                    left = mid + 1;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Finds the index of the last element with timestamp.UtcTicks <= targetTicks.
+        /// Returns -1 if all elements are greater than targetTicks.
+        /// </summary>
+        private int FindLastIndexAtOrBeforeTicks(long targetTicks)
         {
             int left = 0;
             int right = _items.Count - 1;
@@ -291,7 +280,9 @@ namespace TemporalCollections.Collections
             while (left <= right)
             {
                 int mid = (left + right) / 2;
-                if (_items[mid].Timestamp <= target)
+                long midTicks = _items[mid].Timestamp.UtcTicks;
+
+                if (midTicks <= targetTicks)
                 {
                     result = mid;
                     left = mid + 1;
@@ -301,7 +292,6 @@ namespace TemporalCollections.Collections
                     right = mid - 1;
                 }
             }
-
             return result;
         }
 

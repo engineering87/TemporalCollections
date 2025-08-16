@@ -2,6 +2,7 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
+using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
@@ -9,6 +10,7 @@ namespace TemporalCollections.Collections
     /// A thread-safe priority queue where each item has a priority and insertion timestamp,
     /// allowing ordering by priority and stable ordering by insertion time.
     /// Implements <see cref="ITimeQueryable{TValue}"/> for time-based querying and removal.
+    /// Public API uses DateTime; internal comparisons use DateTimeOffset (UTC).
     /// </summary>
     /// <typeparam name="TPriority">Type of the priority; must implement <see cref="IComparable{TPriority}"/>.</typeparam>
     /// <typeparam name="TValue">Type of the stored values.</typeparam>
@@ -17,6 +19,9 @@ namespace TemporalCollections.Collections
     {
         private readonly Lock _lock = new();
         private readonly SortedSet<QueueItem> _set;
+
+        // Centralized policy for DateTimeKind.Unspecified handling.
+        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TemporalPriorityQueue{TPriority, TValue}"/> class.
@@ -31,23 +36,18 @@ namespace TemporalCollections.Collections
         /// </summary>
         public int Count
         {
-            get
-            {
-                lock (_lock)
-                {
-                    return _set.Count;
-                }
+            get 
+            { 
+                lock (_lock) return _set.Count; 
             }
         }
 
         /// <summary>
         /// Enqueues a value with the specified priority and current timestamp.
         /// </summary>
-        /// <param name="value">The value to enqueue.</param>
-        /// <param name="priority">The priority associated with the value.</param>
         public void Enqueue(TValue value, TPriority priority)
         {
-            // Use TemporalItem.Create to guarantee strictly increasing timestamps (even across threads)
+            // TemporalItem.Create ensures strictly increasing DateTimeOffset UTC timestamps.
             var ti = TemporalItem<TValue>.Create(value);
             lock (_lock)
             {
@@ -58,8 +58,6 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Attempts to dequeue the highest priority item (lowest priority value).
         /// </summary>
-        /// <param name="value">When this method returns, contains the dequeued value if successful; otherwise, the default value.</param>
-        /// <returns>True if an item was dequeued; otherwise, false if the queue was empty.</returns>
         public bool TryDequeue(out TValue? value)
         {
             lock (_lock)
@@ -80,8 +78,6 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Attempts to peek at the highest priority item without removing it.
         /// </summary>
-        /// <param name="value">When this method returns, contains the peeked value if successful; otherwise, the default value.</param>
-        /// <returns>True if an item was found; otherwise, false if the queue is empty.</returns>
         public bool TryPeek(out TValue? value)
         {
             lock (_lock)
@@ -100,37 +96,35 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns items whose timestamps fall within the given range (inclusive).
         /// </summary>
-        /// <param name="from">Start of the time range (inclusive).</param>
-        /// <param name="to">End of the time range (inclusive).</param>
-        /// <returns>An enumerable of temporal items in the specified time range.</returns>
         public IEnumerable<TemporalItem<TValue>> GetInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 return _set
-                    .Where(item => item.Timestamp >= from && item.Timestamp <= to)
+                    .Where(item => f <= item.Timestamp.UtcTicks && item.Timestamp.UtcTicks <= t)
                     .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
-                    .OrderBy(i => i.Timestamp)
+                    .OrderBy(i => i.Timestamp.UtcTicks)
                     .ToList();
             }
         }
 
         /// <summary>
-        /// Removes all items older than the specified cutoff date.
+        /// Removes all items older than the specified cutoff date (strictly less).
         /// </summary>
-        /// <param name="cutoff">The cutoff timestamp; items older than this will be removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
+            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+
             lock (_lock)
             {
-                // Must NOT break early: the set is ordered by (Priority, Timestamp), not by Timestamp alone
+                // Cannot break early: set is ordered by (Priority, Timestamp), not only by Timestamp.
                 var toRemove = new List<QueueItem>();
                 foreach (var item in _set)
                 {
-                    if (item.Timestamp < cutoff)
+                    if (item.Timestamp.UtcTicks < c)
                         toRemove.Add(item);
                 }
                 foreach (var item in toRemove)
@@ -140,41 +134,46 @@ namespace TemporalCollections.Collections
 
         /// <summary>
         /// Returns the time span between the earliest and latest timestamps in the queue.
-        /// Returns <see cref="TimeSpan.Zero"/> if the queue is empty.
+        /// Returns <see cref="TimeSpan.Zero"/> if the queue has fewer than two items.
         /// </summary>
         public TimeSpan GetTimeSpan()
         {
             lock (_lock)
             {
-                if (_set.Count == 0) return TimeSpan.Zero;
+                if (_set.Count < 2) return TimeSpan.Zero;
 
-                DateTime minTs = DateTime.MaxValue;
-                DateTime maxTs = DateTime.MinValue;
+                DateTimeOffset minTs = DateTimeOffset.MaxValue;
+                DateTimeOffset maxTs = DateTimeOffset.MinValue;
 
                 foreach (var item in _set)
                 {
-                    if (item.Timestamp < minTs) minTs = item.Timestamp;
-                    if (item.Timestamp > maxTs) maxTs = item.Timestamp;
+                    var ts = item.Timestamp;
+                    if (ts < minTs) minTs = ts;
+                    if (ts > maxTs) maxTs = ts;
                 }
 
-                return maxTs - minTs;
+                var span = maxTs - minTs;
+                return span < TimeSpan.Zero ? TimeSpan.Zero : span;
             }
         }
 
         /// <summary>
         /// Counts the number of items with timestamps within the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Start of the time range (inclusive).</param>
-        /// <param name="to">End of the time range (inclusive).</param>
-        /// <returns>The number of items within the specified range.</returns>
         public int CountInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
-                return _set.Count(i => i.Timestamp >= from && i.Timestamp <= to);
+                int count = 0;
+                foreach (var i in _set)
+                {
+                    long x = i.Timestamp.UtcTicks;
+                    if (f <= x && x <= t) count++;
+                }
+                return count;
             }
         }
 
@@ -183,34 +182,33 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Clear()
         {
-            lock (_lock)
-            {
-                _set.Clear();
-            }
+            lock (_lock) _set.Clear();
         }
 
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Start of the time range (inclusive).</param>
-        /// <param name="to">End of the time range (inclusive).</param>
         public void RemoveRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
-                var toRemove = _set.Where(i => i.Timestamp >= from && i.Timestamp <= to).ToList();
+                var toRemove = _set.Where(i =>
+                {
+                    long x = i.Timestamp.UtcTicks;
+                    return f <= x && x <= t;
+                }).ToList();
+
                 foreach (var item in toRemove)
                     _set.Remove(item);
             }
         }
 
         /// <summary>
-        /// Gets the most recent item by timestamp, or <c>null</c> if the queue is empty.
+        /// Gets the most recent item by timestamp, or null if the queue is empty.
         /// </summary>
-        /// <returns>The latest temporal item, or null if empty.</returns>
         public TemporalItem<TValue>? GetLatest()
         {
             lock (_lock)
@@ -220,7 +218,7 @@ namespace TemporalCollections.Collections
 
                 foreach (var item in _set)
                 {
-                    if (latest is null || item.Timestamp > latest.Timestamp)
+                    if (latest is null || item.Timestamp.UtcTicks > latest.Timestamp.UtcTicks)
                         latest = item;
                 }
 
@@ -229,9 +227,8 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Gets the oldest item by timestamp, or <c>null</c> if the queue is empty.
+        /// Gets the oldest item by timestamp, or null if the queue is empty.
         /// </summary>
-        /// <returns>The earliest temporal item, or null if empty.</returns>
         public TemporalItem<TValue>? GetEarliest()
         {
             lock (_lock)
@@ -241,7 +238,7 @@ namespace TemporalCollections.Collections
 
                 foreach (var item in _set)
                 {
-                    if (earliest is null || item.Timestamp < earliest.Timestamp)
+                    if (earliest is null || item.Timestamp.UtcTicks < earliest.Timestamp.UtcTicks)
                         earliest = item;
                 }
 
@@ -250,35 +247,35 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Returns all items strictly before the specified time (<paramref name="time"/>).
+        /// Returns all items strictly before the specified time.
         /// </summary>
-        /// <param name="time">The exclusive upper bound timestamp.</param>
-        /// <returns>An enumerable of items with timestamp &lt; <paramref name="time"/>.</returns>
         public IEnumerable<TemporalItem<TValue>> GetBefore(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
                 return _set
-                    .Where(i => i.Timestamp < time)
+                    .Where(i => i.Timestamp.UtcTicks < cutoff)
                     .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
-                    .OrderBy(i => i.Timestamp)
+                    .OrderBy(i => i.Timestamp.UtcTicks)
                     .ToList();
             }
         }
 
         /// <summary>
-        /// Returns all items strictly after the specified time (<paramref name="time"/>).
+        /// Returns all items strictly after the specified time.
         /// </summary>
-        /// <param name="time">The exclusive lower bound timestamp.</param>
-        /// <returns>An enumerable of items with timestamp &gt; <paramref name="time"/>.</returns>
         public IEnumerable<TemporalItem<TValue>> GetAfter(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
                 return _set
-                    .Where(i => i.Timestamp > time)
+                    .Where(i => i.Timestamp.UtcTicks > cutoff)
                     .Select(i => new TemporalItem<TValue>(i.Value, i.Timestamp))
-                    .OrderBy(i => i.Timestamp)
+                    .OrderBy(i => i.Timestamp.UtcTicks)
                     .ToList();
             }
         }
@@ -288,56 +285,48 @@ namespace TemporalCollections.Collections
         /// </summary>
         private record QueueItem : TemporalItem<TValue>, IComparable<QueueItem>
         {
-            /// <summary>
-            /// Gets the priority of the item.
-            /// </summary>
+            /// <summary>Gets the priority of the item.</summary>
             public TPriority Priority { get; }
 
             /// <summary>
             /// Initializes a new instance of the <see cref="QueueItem"/> record.
             /// </summary>
-            /// <param name="value">The stored value.</param>
-            /// <param name="priority">The priority of the item.</param>
-            /// <param name="timestamp">The insertion timestamp.</param>
-            public QueueItem(TValue value, TPriority priority, DateTime timestamp)
+            public QueueItem(TValue value, TPriority priority, DateTimeOffset timestamp)
                 : base(value, timestamp)
             {
                 Priority = priority;
             }
 
             /// <summary>
-            /// Compares this item to another based on priority, then timestamp.
+            /// Compares this item to another based on priority, then timestamp, then runtime id for strict ordering.
             /// </summary>
-            /// <param name="other">The other item to compare to.</param>
-            /// <returns>A signed integer that indicates the relative order of the objects being compared.</returns>
             public int CompareTo(QueueItem? other)
             {
-                if (other == null) return 1;
+                if (other is null) return 1;
 
-                int priorityComparison = Priority.CompareTo(other.Priority);
-                if (priorityComparison != 0)
-                    return priorityComparison;
+                int c = Priority.CompareTo(other.Priority);
+                if (c != 0) return c;
 
-                return Timestamp.CompareTo(other.Timestamp);
+                c = Timestamp.CompareTo(other.Timestamp);
+                if (c != 0) return c;
+
+                // Tie-breaker: ensure strict weak ordering to avoid SortedSet dropping distinct items
+                int hx = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+                int hy = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(other);
+                return hx.CompareTo(hy);
             }
         }
 
         /// <summary>
-        /// Comparer for queue items that delegates to their <see cref="QueueItem.CompareTo"/> method.
+        /// Comparer for queue items delegating to <see cref="QueueItem.CompareTo"/>.
         /// </summary>
-        private class QueueItemComparer : IComparer<QueueItem>
+        private sealed class QueueItemComparer : IComparer<QueueItem>
         {
-            /// <summary>
-            /// Compares two queue items.
-            /// </summary>
-            /// <param name="x">The first item to compare.</param>
-            /// <param name="y">The second item to compare.</param>
-            /// <returns>A signed integer that indicates the relative order of the objects being compared.</returns>
             public int Compare(QueueItem? x, QueueItem? y)
             {
                 if (ReferenceEquals(x, y)) return 0;
-                if (x == null) return -1;
-                if (y == null) return 1;
+                if (x is null) return -1;
+                if (y is null) return 1;
                 return x.CompareTo(y);
             }
         }

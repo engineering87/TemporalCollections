@@ -11,8 +11,6 @@ namespace TemporalCollections.Tests.Collections
         {
             var list = new TemporalSortedList<string>();
 
-            var now = DateTime.UtcNow;
-
             list.Add("first");
             Thread.Sleep(10);
             list.Add("second");
@@ -41,17 +39,19 @@ namespace TemporalCollections.Tests.Collections
             list.Add("c");
 
             var allItems = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
-            var timeA = allItems.First(i => i.Value == "a").Timestamp;
-            var timeB = allItems.First(i => i.Value == "b").Timestamp;
-            var timeC = allItems.First(i => i.Value == "c").Timestamp;
+            var timeA = allItems.First(i => i.Value == "a").Timestamp; // DateTimeOffset
+            var timeB = allItems.First(i => i.Value == "b").Timestamp; // DateTimeOffset
+            var timeC = allItems.First(i => i.Value == "c").Timestamp; // DateTimeOffset
 
-            var items = list.GetInRange(timeA.AddMilliseconds(1), timeC.AddMilliseconds(1)).ToList();
+            var from = timeA.AddMilliseconds(1).UtcDateTime;
+            var to = timeC.AddMilliseconds(1).UtcDateTime;
+
+            var items = list.GetInRange(from, to).ToList();
 
             Assert.Contains(items, item => item.Value == "b");
             Assert.Contains(items, item => item.Value == "c");
             Assert.DoesNotContain(items, item => item.Value == "a");
         }
-
 
         [Fact]
         public void RemoveOlderThan_RemovesCorrectItems()
@@ -64,20 +64,18 @@ namespace TemporalCollections.Tests.Collections
             Thread.Sleep(5);
             list.Add("c");
 
-            // Take a stable, ordered snapshot to get exact boundaries.
             var snap = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
                            .OrderBy(i => i.Timestamp)
                            .ToList();
 
             Assert.Equal(3, snap.Count);
 
-            var tA = snap[0].Timestamp;
-            var tB = snap[1].Timestamp;
-            var tC = snap[2].Timestamp;
+            var tA = snap[0].Timestamp; // DateTimeOffset
+            var tB = snap[1].Timestamp; // DateTimeOffset
 
-            // Choose a cutoff strictly between A and B so only "a" is older than cutoff.
-            // Using the midpoint guarantees tA < cutoff < tB, avoiding timing flakiness.
-            var cutoff = new DateTime((tA.Ticks + tB.Ticks) / 2, DateTimeKind.Utc);
+            // cutoff strictly between A and B (in UTC ticks)
+            var cutoffTicks = (tA.UtcTicks + tB.UtcTicks) / 2;
+            var cutoff = new DateTime(cutoffTicks, DateTimeKind.Utc);
 
             list.RemoveOlderThan(cutoff);
 
@@ -104,7 +102,7 @@ namespace TemporalCollections.Tests.Collections
             var cutoff = DateTime.UtcNow.AddSeconds(1);
             list.RemoveOlderThan(cutoff);
 
-            Assert.True(list.Count <= 2);  // depends on timestamps, at least no exception
+            Assert.True(list.Count <= 2);
         }
     }
 }

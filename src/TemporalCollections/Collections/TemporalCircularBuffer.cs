@@ -2,12 +2,14 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
+using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
     /// <summary>
     /// A thread-safe fixed-capacity circular buffer that stores timestamped items,
     /// overwriting the oldest entries when full.
+    /// Public API uses DateTime; internal comparisons use DateTimeOffset (UTC).
     /// </summary>
     /// <typeparam name="T">Type of items stored in the buffer.</typeparam>
     public class TemporalCircularBuffer<T> : ITimeQueryable<T>
@@ -17,15 +19,15 @@ namespace TemporalCollections.Collections
         private int _head;
         private int _count;
 
-        /// <summary>
-        /// Gets the fixed capacity of the circular buffer.
-        /// </summary>
+        // Centralized policy for DateTimeKind.Unspecified handling.
+        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
+
+        /// <summary>Gets the fixed capacity of the circular buffer.</summary>
         public int Capacity { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TemporalCircularBuffer{T}"/> class with the specified capacity.
         /// </summary>
-        /// <param name="capacity">The fixed maximum number of elements the buffer can hold.</param>
         /// <exception cref="ArgumentException">Thrown if capacity is not positive.</exception>
         public TemporalCircularBuffer(int capacity)
         {
@@ -38,25 +40,16 @@ namespace TemporalCollections.Collections
             _count = 0;
         }
 
-        /// <summary>
-        /// Gets the current number of items stored in the buffer.
-        /// </summary>
+        /// <summary>Gets the current number of items stored in the buffer.</summary>
         public int Count
         {
-            get
-            {
-                lock (_lock)
-                {
-                    return _count;
-                }
-            }
+            get { lock (_lock) return _count; }
         }
 
         /// <summary>
         /// Adds a new item to the buffer with the current timestamp,
         /// overwriting the oldest item if the buffer is full.
         /// </summary>
-        /// <param name="item">The item to add.</param>
         public void Add(T item)
         {
             var temporalItem = TemporalItem<T>.Create(item);
@@ -94,13 +87,10 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns all temporal items whose timestamps fall within the specified time range, inclusive.
         /// </summary>
-        /// <param name="from">The start of the time range (inclusive).</param>
-        /// <param name="to">The end of the time range (inclusive).</param>
-        /// <returns>An enumerable of temporal items with timestamps between <paramref name="from"/> and <paramref name="to"/>.</returns>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
@@ -109,11 +99,11 @@ namespace TemporalCollections.Collections
                 var list = new List<TemporalItem<T>>();
                 IterateOrdered(item =>
                 {
-                    var ts = item.Timestamp;
-                    if (ts >= from && ts <= to)
+                    long x = item.Timestamp.UtcTicks;
+                    if (f <= x && x <= t)
                         list.Add(item);
-                    // Small fast-path: since items are chronological, we *could* break when ts > to.
-                    // We avoid early-break here to keep IterateOrdered simple and side-effect-free.
+                    // Fast-path possibile: items cronologici → si potrebbe interrompere quando x > t.
+                    // Evitiamo early-break per mantenere IterateOrdered semplice e senza effetti collaterali.
                 });
                 return list;
             }
@@ -121,11 +111,12 @@ namespace TemporalCollections.Collections
 
         /// <summary>
         /// Removes all items with timestamps older than the specified cutoff time.
-        /// Retains only items with timestamps greater than or equal to <paramref name="cutoff"/>.
+        /// Retains only items with timestamps >= cutoff.
         /// </summary>
-        /// <param name="cutoff">The cutoff <see cref="DateTime"/>; items older than this will be removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
+            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+
             lock (_lock)
             {
                 if (_count == 0) return;
@@ -133,7 +124,7 @@ namespace TemporalCollections.Collections
                 var kept = new List<TemporalItem<T>>(_count);
                 IterateOrdered(item =>
                 {
-                    if (item.Timestamp >= cutoff)
+                    if (item.Timestamp.UtcTicks >= c)
                         kept.Add(item);
                 });
 
@@ -144,7 +135,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the total timespan covered by items in the buffer,
         /// computed as (latest.Timestamp - earliest.Timestamp).
-        /// Returns <see cref="TimeSpan.Zero"/> if there are fewer than two items.
+        /// Returns TimeSpan.Zero if there are fewer than two items.
         /// </summary>
         public TimeSpan GetTimeSpan()
         {
@@ -155,7 +146,7 @@ namespace TemporalCollections.Collections
                 var earliest = GetAtOrderedIndex(0);
                 var latest = GetAtOrderedIndex(_count - 1);
 
-                var span = latest.Timestamp - earliest.Timestamp;
+                var span = latest.Timestamp - earliest.Timestamp; // DateTimeOffset subtraction -> TimeSpan
                 return span < TimeSpan.Zero ? TimeSpan.Zero : span;
             }
         }
@@ -163,22 +154,20 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the number of items with timestamps in the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Range start (inclusive).</param>
-        /// <param name="to">Range end (inclusive).</param>
         public int CountInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 if (_count == 0) return 0;
 
                 int cnt = 0;
-                IterateOrdered((item) =>
+                IterateOrdered(item =>
                 {
-                    var ts = item.Timestamp;
-                    if (ts >= from && ts <= to) cnt++;
+                    long x = item.Timestamp.UtcTicks;
+                    if (f <= x && x <= t) cnt++;
                 });
                 return cnt;
             }
@@ -200,22 +189,20 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range [from, to].
         /// </summary>
-        /// <param name="from">Range start (inclusive).</param>
-        /// <param name="to">Range end (inclusive).</param>
         public void RemoveRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
                 if (_count == 0) return;
 
                 var kept = new List<TemporalItem<T>>(_count);
-                IterateOrdered((item) =>
+                IterateOrdered(item =>
                 {
-                    var ts = item.Timestamp;
-                    if (ts < from || ts > to)
+                    long x = item.Timestamp.UtcTicks;
+                    if (x < f || x > t)
                         kept.Add(item);
                 });
 
@@ -253,17 +240,18 @@ namespace TemporalCollections.Collections
         /// Retrieves all items with timestamp strictly before <paramref name="time"/>.
         /// The returned items are ordered from oldest to newest.
         /// </summary>
-        /// <param name="time">Exclusive upper bound for the timestamp.</param>
         public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                if (_count == 0) return [];
+                if (_count == 0) return Array.Empty<TemporalItem<T>>();
 
                 var list = new List<TemporalItem<T>>();
-                IterateOrdered((item) =>
+                IterateOrdered(item =>
                 {
-                    if (item.Timestamp < time)
+                    if (item.Timestamp.UtcTicks < cutoff)
                         list.Add(item);
                 });
                 return list;
@@ -274,17 +262,18 @@ namespace TemporalCollections.Collections
         /// Retrieves all items with timestamp strictly after <paramref name="time"/>.
         /// The returned items are ordered from oldest to newest.
         /// </summary>
-        /// <param name="time">Exclusive lower bound for the timestamp.</param>
         public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                if (_count == 0) return [];
+                if (_count == 0) return Array.Empty<TemporalItem<T>>();
 
                 var list = new List<TemporalItem<T>>();
-                IterateOrdered((item) =>
+                IterateOrdered(item =>
                 {
-                    if (item.Timestamp > time)
+                    if (item.Timestamp.UtcTicks > cutoff)
                         list.Add(item);
                 });
                 return list;

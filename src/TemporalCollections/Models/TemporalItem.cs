@@ -5,44 +5,54 @@ using System.Runtime.CompilerServices;
 namespace TemporalCollections.Models
 {
     /// <summary>
-    /// Represents an immutable value paired with the timestamp of its creation.
-    /// Ensures that timestamps are strictly increasing, even when multiple items
-    /// are created in rapid succession or in parallel threads.
-    /// </summary>
-    /// <typeparam name="T">The type of the value being wrapped.</typeparam>
-    public record TemporalItem<T>(T Value, DateTime Timestamp)
+    /// Immutable value paired with a UTC timestamp (<see cref="DateTimeOffset"/>).
+    /// - Timestamps are guaranteed to be strictly increasing monotonic *per closed generic type*,
+    ///   even under high concurrency or same-tick creations.
+    /// - UTC is used to avoid time zone / DST ambiguity at the API boundary.
+    /// <typeparam name="T">Wrapped value type.</typeparam>
+    public record TemporalItem<T>(T Value, DateTimeOffset Timestamp)
     {
-        // Stores the last timestamp (in ticks) that was generated.
-        // Used to guarantee uniqueness and monotonicity across calls to Create().
-        private static long _lastTicks = DateTime.UtcNow.Ticks;
+        // Tracks the last emitted UTC ticks for *this closed generic type*.
+        // We use DateTimeOffset.UtcNow.Ticks (100-ns tick resolution) and ensure
+        // strictly increasing values via an atomic Compare-Exchange loop.
+        // Initialize with current UtcNow ticks to avoid starting at zero.
+        private static long _lastUtcTicks = DateTimeOffset.UtcNow.Ticks;
+
+        // Legacy shim (UTC)
+        public DateTime TimestampUtc => Timestamp.UtcDateTime;
 
         /// <summary>
-        /// Creates a new <see cref="TemporalItem{T}"/> instance with the current UTC timestamp.
-        /// If multiple items are created within the same tick, the timestamp will be artificially
-        /// incremented to ensure uniqueness and strict ordering.
+        /// Creates a new item stamped with a strictly increasing UTC timestamp.
+        /// If multiple items are created within the same tick or concurrently,
+        /// we increment ticks to preserve strict ordering.
         /// </summary>
-        /// <param name="value">The value to be wrapped in a temporal container.</param>
-        /// <returns>A new <see cref="TemporalItem{T}"/> with a guaranteed unique timestamp.</returns>
+        /// <param name="value">Value to wrap.</param>
+        /// <returns>New <see cref="TemporalItem{T}"/> with monotonic UTC timestamp.</returns>
         public static TemporalItem<T> Create(T value)
         {
-            long ticks = DateTime.UtcNow.Ticks;
-            long original, updated;
+            // Current wall clock in UTC ticks (offset = 0).
+            long nowTicks = DateTimeOffset.UtcNow.Ticks;
 
-            // Loop until we successfully update the last used timestamp atomically.
+            long observed; // last observed ticks
+            long next;     // candidate next ticks (>= observed + 1)
+
+            // Ensure strictly increasing ticks using an atomic CAS loop:
+            //   next = max(nowTicks, observed + 1)
             do
             {
-                original = _lastTicks;
-                // If the current ticks are not greater than the last used, increment by 1 tick
-                updated = ticks <= original ? original + 1 : ticks;
+                observed = Volatile.Read(ref _lastUtcTicks);
+                next = nowTicks <= observed ? observed + 1 : nowTicks;
             }
-            while (Interlocked.CompareExchange(ref _lastTicks, updated, original) != original);
+            while (Interlocked.CompareExchange(ref _lastUtcTicks, next, observed) != observed);
 
-            return new TemporalItem<T>(value, new DateTime(updated, DateTimeKind.Utc));
+            // Construct a UTC DateTimeOffset from ticks (offset zero).
+            return new TemporalItem<T>(value, new DateTimeOffset(next, TimeSpan.Zero));
         }
 
         /// <summary>
-        /// IComparer that orders items by Timestamp ascending and uses stable tie-breakers
-        /// to avoid treating distinct items as duplicates in ordered sets.
+        /// Stable comparer: primary order by <see cref="Timestamp"/> ascending,
+        /// then tie-break on <see cref="Value"/> when comparable, and finally on
+        /// runtime identity to maintain a strict weak ordering.
         /// </summary>
         public static IComparer<TemporalItem<T>> TimestampComparer { get; } = new StableTimestampComparer();
 
@@ -50,15 +60,17 @@ namespace TemporalCollections.Models
         {
             public int Compare(TemporalItem<T>? x, TemporalItem<T>? y)
             {
+                // Handle nulls / reference-equals quickly
                 if (ReferenceEquals(x, y)) return 0;
                 if (x is null) return -1;
                 if (y is null) return 1;
 
-                // Primary: timestamp
+                // Primary: timestamp (UTC)
                 int c = x.Timestamp.CompareTo(y.Timestamp);
                 if (c != 0) return c;
 
-                // Secondary: value if comparable (generic first)
+                // Secondary: value when comparable.
+                // Prefer generic IComparable<T> for strong typing, then fallback to non-generic.
                 if (x.Value is IComparable<T> gen && y.Value is not null)
                 {
                     c = gen.CompareTo(y.Value);
@@ -70,14 +82,11 @@ namespace TemporalCollections.Models
                     if (c != 0) return c;
                 }
 
-                // Final: runtime identity to guarantee a strict weak ordering
-                // (prevents SortedSet from dropping distinct items as duplicates)
+                // Final: runtime identity to keep a strict ordering and avoid
+                // dropping distinct items from sorted sets/maps.
                 int hx = RuntimeHelpers.GetHashCode(x);
                 int hy = RuntimeHelpers.GetHashCode(y);
-                if (hx != hy) return hx.CompareTo(hy);
-
-                // Extremely unlikely: same runtime identity (or same reference)
-                return 0;
+                return hx.CompareTo(hy);
             }
         }
     }

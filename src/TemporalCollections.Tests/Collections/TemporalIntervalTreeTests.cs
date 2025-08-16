@@ -88,7 +88,7 @@ namespace TemporalCollections.Tests.Collections
             var end = start.AddMinutes(-1);
 
             var ex = Assert.Throws<ArgumentException>(() => tree.Query(start, end));
-            Assert.Contains("queryEnd must be >=", ex.Message);
+            Assert.Contains("must be <=", ex.Message);
         }
 
         [Fact]

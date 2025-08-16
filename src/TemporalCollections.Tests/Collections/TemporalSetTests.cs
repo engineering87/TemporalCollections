@@ -6,7 +6,7 @@ namespace TemporalCollections.Tests.Collections
 {
     public class TemporalSetTests
     {
-        private static (TemporalSet<string> set, DateTime tA, DateTime tB, DateTime tC, DateTime tD) CreateSetABCD()
+        private static (TemporalSet<string> set, DateTimeOffset tA, DateTimeOffset tB, DateTimeOffset tC, DateTimeOffset tD) CreateSetABCD()
         {
             var set = new TemporalSet<string>();
             set.Add("A");
@@ -34,7 +34,9 @@ namespace TemporalCollections.Tests.Collections
             var snapshot = set.GetItems().ToList();
             Assert.Single(snapshot);
             Assert.Equal("A", snapshot[0].Value);
-            Assert.InRange(snapshot[0].Timestamp, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddSeconds(1));
+
+            var now = DateTimeOffset.UtcNow;
+            Assert.InRange(snapshot[0].Timestamp, now.AddMinutes(-1), now.AddSeconds(1));
         }
 
         [Fact]
@@ -85,10 +87,7 @@ namespace TemporalCollections.Tests.Collections
                 set.Add(i);
             });
 
-            // All distinct ints from 0..1999 inserted in parallel -> count should be 2000
             Assert.Equal(2000, set.Count);
-
-            // Spot-check: some values present
             Assert.True(set.Contains(0));
             Assert.True(set.Contains(1999));
         }
@@ -132,7 +131,7 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, _, tB, tC, _) = CreateSetABCD();
 
-            var items = set.GetInRange(tB, tC).Select(x => x.Value).ToList();
+            var items = set.GetInRange(tB.UtcDateTime, tC.UtcDateTime).Select(x => x.Value).ToList();
 
             Assert.Equal(new[] { "B", "C" }, items);
         }
@@ -142,7 +141,7 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, _, tB, tC, _) = CreateSetABCD();
 
-            var count = set.CountInRange(tB, tC);
+            var count = set.CountInRange(tB.UtcDateTime, tC.UtcDateTime);
 
             Assert.Equal(2, count);
         }
@@ -152,9 +151,10 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, tA, tB, _, _) = CreateSetABCD();
 
-            var midAB = new DateTime((tA.Ticks + tB.Ticks) / 2, DateTimeKind.Utc);
+            var midABTicks = (tA.UtcTicks + tB.UtcTicks) / 2;
+            var midAB = new DateTimeOffset(midABTicks, TimeSpan.Zero);
 
-            var items = set.GetBefore(midAB).Select(x => x.Value).ToList();
+            var items = set.GetBefore(midAB.UtcDateTime).Select(x => x.Value).ToList();
 
             Assert.Equal(new[] { "A" }, items);
         }
@@ -164,9 +164,10 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, _, _, tC, tD) = CreateSetABCD();
 
-            var midCD = new DateTime((tC.Ticks + tD.Ticks) / 2, DateTimeKind.Utc);
+            var midCDTicks = (tC.UtcTicks + tD.UtcTicks) / 2;
+            var midCD = new DateTimeOffset(midCDTicks, TimeSpan.Zero);
 
-            var items = set.GetAfter(midCD).Select(x => x.Value).ToList();
+            var items = set.GetAfter(midCD.UtcDateTime).Select(x => x.Value).ToList();
 
             Assert.Equal(new[] { "D" }, items);
         }
@@ -176,7 +177,7 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, _, tB, tC, _) = CreateSetABCD();
 
-            set.RemoveRange(tB, tC);
+            set.RemoveRange(tB.UtcDateTime, tC.UtcDateTime);
 
             Assert.Equal(2, set.Count);
             Assert.True(set.Contains("A"));
@@ -190,8 +191,7 @@ namespace TemporalCollections.Tests.Collections
         {
             var (set, tA, _, _, tD) = CreateSetABCD();
 
-            // Remove all items strictly older than tD -> keeps only D
-            set.RemoveOlderThan(tD);
+            set.RemoveOlderThan(tD.UtcDateTime);
 
             Assert.Equal(1, set.Count);
             Assert.True(set.Contains("D"));

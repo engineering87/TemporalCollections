@@ -1,37 +1,40 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
-using System.Collections.Concurrent;
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
+using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
     /// <summary>
     /// A thread-safe FIFO queue where each item has an insertion timestamp,
     /// enabling efficient time-based queries and removal of old elements.
+    /// Public API uses DateTime; internal comparisons use DateTimeOffset (UTC).
     /// </summary>
     /// <typeparam name="T">Type of items stored in the queue.</typeparam>
     public class TemporalQueue<T> : ITimeQueryable<T>
     {
-        private readonly ConcurrentQueue<TemporalItem<T>> _queue = new();
+        // Oldest -> front ; Newest -> back
+        private readonly Queue<TemporalItem<T>> _queue = new();
         private readonly Lock _lock = new();
 
+        // Centralized policy for DateTimeKind.Unspecified handling.
+        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
+
         /// <summary>
-        /// Gets the total number of items currently in the queue.
-        /// Note: this is a snapshot and runs in O(n).
+        /// Gets the total number of items currently in the queue (O(1)).
         /// </summary>
         public int Count
         {
-            get
-            {
-                lock (_lock) { return _queue.Count; }
+            get 
+            { 
+                lock (_lock) return _queue.Count; 
             }
         }
 
         /// <summary>
         /// Enqueues an item with the current timestamp.
         /// </summary>
-        /// <param name="item">The item to enqueue.</param>
         public void Enqueue(T item)
         {
             var temporalItem = TemporalItem<T>.Create(item);
@@ -44,52 +47,48 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Dequeues the oldest item from the queue.
         /// </summary>
-        /// <returns>The dequeued <see cref="TemporalItem{T}"/>.</returns>
-        /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
         public TemporalItem<T> Dequeue()
         {
             lock (_lock)
             {
-                if (_queue.TryDequeue(out var item))
-                    return item;
-                throw new InvalidOperationException("Queue is empty.");
+                if (_queue.Count == 0)
+                    throw new InvalidOperationException("Queue is empty.");
+                return _queue.Dequeue();
             }
         }
 
         /// <summary>
         /// Returns the item at the front of the queue without removing it.
         /// </summary>
-        /// <returns>The front <see cref="TemporalItem{T}"/>.</returns>
-        /// <exception cref="InvalidOperationException">Thrown if the queue is empty.</exception>
         public TemporalItem<T> Peek()
         {
             lock (_lock)
             {
-                if (_queue.TryPeek(out var item))
-                    return item;
-                throw new InvalidOperationException("Queue is empty.");
+                if (_queue.Count == 0)
+                    throw new InvalidOperationException("Queue is empty.");
+                return _queue.Peek();
             }
         }
 
         /// <summary>
         /// Retrieves all items whose timestamps are within the specified inclusive time range.
-        /// The snapshot is taken under lock to ensure a consistent view.
+        /// Snapshot taken under lock for consistent semantics.
         /// </summary>
-        /// <param name="from">Start of the time range (inclusive).</param>
-        /// <param name="to">End of the time range (inclusive).</param>
-        /// <returns>A list of matching items.</returns>
-        /// <exception cref="ArgumentException">Thrown when <paramref name="to"/> is earlier than <paramref name="from"/>.</exception>
         public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
-                // ConcurrentQueue enumerates a moment-in-time snapshot; we still hold the lock
-                // to keep semantics consistent across all public methods.
-                return _queue.Where(i => i.Timestamp >= from && i.Timestamp <= to)
-                             .ToList();
+                if (_queue.Count == 0) return Array.Empty<TemporalItem<T>>();
+
+                // Queue enumeration is oldest -> newest
+                return _queue.Where(i =>
+                {
+                    long x = i.Timestamp.UtcTicks;
+                    return f <= x && x <= t;
+                }).ToList();
             }
         }
 
@@ -97,42 +96,37 @@ namespace TemporalCollections.Collections
         /// Removes items from the front of the queue until all remaining items
         /// have timestamps equal to or newer than the cutoff.
         /// </summary>
-        /// <param name="cutoff">The cutoff timestamp; older items will be removed.</param>
         public void RemoveOlderThan(DateTime cutoff)
         {
+            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+
             lock (_lock)
             {
-                // FIFO is chronological because TemporalItem<T>.Create enforces monotonic timestamps.
-                while (_queue.TryPeek(out var item) && item.Timestamp < cutoff)
-                {
-                    _queue.TryDequeue(out _);
-                }
+                while (_queue.Count > 0 && _queue.Peek().Timestamp.UtcTicks < c)
+                    _queue.Dequeue();
             }
         }
 
         /// <summary>
-        /// Returns the total time span covered by the items in the queue,
-        /// calculated as the difference between the latest and earliest timestamps.
-        /// Returns <see cref="TimeSpan.Zero"/> if the queue is empty or has a single item.
+        /// Returns the total time span covered by the items in the queue.
         /// </summary>
         public TimeSpan GetTimeSpan()
         {
             lock (_lock)
             {
-                if (_queue.IsEmpty) return TimeSpan.Zero;
+                if (_queue.Count < 2) return TimeSpan.Zero;
 
-                // Build a snapshot to compute min/max deterministically.
-                var items = _queue.ToList();
-                if (items.Count < 2) return TimeSpan.Zero;
+                // Compute min/max in a single pass
+                DateTimeOffset min = DateTimeOffset.MaxValue;
+                DateTimeOffset max = DateTimeOffset.MinValue;
 
-                var min = items[0].Timestamp;
-                var max = items[0].Timestamp;
-                for (int i = 1; i < items.Count; i++)
+                foreach (var item in _queue)
                 {
-                    var ts = items[i].Timestamp;
+                    var ts = item.Timestamp;
                     if (ts < min) min = ts;
                     if (ts > max) max = ts;
                 }
+
                 var span = max - min;
                 return span < TimeSpan.Zero ? TimeSpan.Zero : span;
             }
@@ -141,15 +135,20 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Counts the number of items whose timestamps fall within the specified range (inclusive).
         /// </summary>
-        /// <exception cref="ArgumentException">Thrown when <paramref name="to"/> is earlier than <paramref name="from"/>.</exception>
         public int CountInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
-                return _queue.Count(i => i.Timestamp >= from && i.Timestamp <= to);
+                int count = 0;
+                foreach (var i in _queue)
+                {
+                    long x = i.Timestamp.UtcTicks;
+                    if (f <= x && x <= t) count++;
+                }
+                return count;
             }
         }
 
@@ -160,30 +159,32 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                // Use Clear() when available; otherwise, drain the queue.
                 _queue.Clear();
-                // Fallback for older TFMs:
-                // while (_queue.TryDequeue(out _)) { }
             }
         }
 
         /// <summary>
-        /// Removes all items whose timestamps fall within the specified inclusive range.
-        /// This method takes a snapshot, filters, clears the queue, then enqueues kept items.
+        /// Removes all items whose timestamps fall within the inclusive range.
+        /// Snapshot-filter-clear-reenqueue to preserve FIFO among kept elements.
         /// </summary>
-        /// <exception cref="ArgumentException">Thrown when <paramref name="to"/> is earlier than <paramref name="from"/>.</exception>
         public void RemoveRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             lock (_lock)
             {
-                var kept = _queue.Where(i => i.Timestamp < from || i.Timestamp > to).ToList();
+                if (_queue.Count == 0) return;
 
-                _queue.Clear(); // .NET 6+; otherwise drain with TryDequeue in a loop
-                foreach (var item in kept)
-                    _queue.Enqueue(item);
+                var kept = new List<TemporalItem<T>>(_queue.Count);
+                foreach (var i in _queue)
+                {
+                    long x = i.Timestamp.UtcTicks;
+                    if (x < f || x > t) kept.Add(i);
+                }
+
+                _queue.Clear();
+                foreach (var i in kept) _queue.Enqueue(i);
             }
         }
 
@@ -194,17 +195,15 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                // If we needed O(1), we could track tail timestamp separately; O(n) is acceptable here.
+                if (_queue.Count == 0) return null;
+
                 TemporalItem<T>? best = null;
-                DateTime bestTs = DateTime.MinValue;
+                long bestTicks = long.MinValue;
 
                 foreach (var it in _queue)
                 {
-                    if (it.Timestamp > bestTs)
-                    {
-                        bestTs = it.Timestamp;
-                        best = it;
-                    }
+                    long x = it.Timestamp.UtcTicks;
+                    if (x > bestTicks) { bestTicks = x; best = it; }
                 }
                 return best;
             }
@@ -217,18 +216,10 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                TemporalItem<T>? best = null;
-                DateTime bestTs = DateTime.MaxValue;
+                if (_queue.Count == 0) return null;
 
-                foreach (var it in _queue)
-                {
-                    if (it.Timestamp < bestTs)
-                    {
-                        bestTs = it.Timestamp;
-                        best = it;
-                    }
-                }
-                return best;
+                // The front is the earliest because we enqueue in chronological order
+                return _queue.Peek();
             }
         }
 
@@ -237,10 +228,15 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                return _queue.Where(i => i.Timestamp < time)
-                             .ToList();
+                if (_queue.Count == 0) return [];
+
+                return _queue
+                    .Where(i => i.Timestamp.UtcTicks < cutoff)
+                    .ToList();
             }
         }
 
@@ -249,10 +245,15 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
             lock (_lock)
             {
-                return _queue.Where(i => i.Timestamp > time)
-                             .ToList();
+                if (_queue.Count == 0) return [];
+
+                return _queue
+                    .Where(i => i.Timestamp.UtcTicks > cutoff)
+                    .ToList();
             }
         }
     }

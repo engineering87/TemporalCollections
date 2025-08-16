@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
+using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
@@ -10,6 +11,7 @@ namespace TemporalCollections.Collections
     /// A thread-safe dictionary storing multiple timestamped values per key,
     /// supporting temporal range queries and cleanup of old entries.
     /// Implements ITimeQueryable to query over all keys.
+    /// Public API uses DateTime; internal comparisons use DateTimeOffset (UTC).
     /// </summary>
     /// <typeparam name="TKey">The type of keys in the dictionary (not nullable).</typeparam>
     /// <typeparam name="TValue">The type of values stored with timestamps.</typeparam>
@@ -18,13 +20,16 @@ namespace TemporalCollections.Collections
     {
         private readonly ConcurrentDictionary<TKey, List<TemporalItem<TValue>>> _dict = new();
 
+        // Centralized policy for DateTimeKind.Unspecified handling.
+        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
+
         /// <summary>
         /// Adds a new value associated with the specified key, timestamped with the current UTC time.
         /// </summary>
         public void Add(TKey key, TValue value)
         {
-            var temporalItem = TemporalItem<TValue>.Create(value);
-            var list = _dict.GetOrAdd(key, _ => new List<TemporalItem<TValue>>());
+            var temporalItem = TemporalItem<TValue>.Create(value); // DateTimeOffset UTC, monotonic
+            var list = _dict.GetOrAdd(key, _ => []);
             lock (list)
             {
                 list.Add(temporalItem);
@@ -35,27 +40,22 @@ namespace TemporalCollections.Collections
         /// Retrieves all temporal items associated with the specified <paramref name="key"/> whose timestamps
         /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
         /// </summary>
-        /// <param name="key">The key to look up temporal items for.</param>
-        /// <param name="from">The start of the timestamp range (inclusive).</param>
-        /// <param name="to">The end of the timestamp range (inclusive).</param>
-        /// <returns>
-        /// A collection of <see cref="TemporalItem{TValue}"/> instances matching the key and timestamp range.
-        /// Returns an empty collection if the key is not found or no items fall within the range.
-        /// </returns>
-        // Aggiungi validazione e ordering per la variante per-chiave
         public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             if (_dict.TryGetValue(key, out var list))
             {
                 lock (list)
                 {
-                    // Order by timestamp to provide deterministic results
                     return list
-                        .Where(item => item.Timestamp >= from && item.Timestamp <= to)
-                        .OrderBy(item => item.Timestamp)
+                        .Where(item =>
+                        {
+                            long x = item.Timestamp.UtcTicks;
+                            return f <= x && x <= t;
+                        })
+                        .OrderBy(item => item.Timestamp.UtcTicks)
                         .ToList();
                 }
             }
@@ -67,12 +67,14 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void RemoveOlderThan(DateTime cutoff)
         {
+            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+
             foreach (var kvp in _dict)
             {
                 var list = kvp.Value;
                 lock (list)
                 {
-                    list.RemoveAll(item => item.Timestamp < cutoff);
+                    list.RemoveAll(item => item.Timestamp.UtcTicks < c);
                     if (list.Count == 0)
                         _dict.TryRemove(kvp.Key, out _);
                 }
@@ -96,18 +98,11 @@ namespace TemporalCollections.Collections
         /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
         /// Each item returned is wrapped as a <see cref="TemporalItem{T}"/> containing
         /// a <see cref="KeyValuePair{TKey, TValue}"/> with the original key and value.
-        /// The collections are locked individually during enumeration for thread safety.
         /// </summary>
-        /// <param name="from">The start of the timestamp range (inclusive).</param>
-        /// <param name="to">The end of the timestamp range (inclusive).</param>
-        /// <returns>
-        /// A list of <see cref="TemporalItem{KeyValuePair{TKey, TValue}}"/> instances
-        /// where each item's timestamp is within the specified range.
-        /// </returns>
         public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
@@ -118,7 +113,8 @@ namespace TemporalCollections.Collections
                 {
                     foreach (var item in list)
                     {
-                        if (item.Timestamp >= from && item.Timestamp <= to)
+                        long x = item.Timestamp.UtcTicks;
+                        if (f <= x && x <= t)
                         {
                             var pair = new KeyValuePair<TKey, TValue>(kvp.Key, item.Value);
                             results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(pair, item.Timestamp));
@@ -128,7 +124,7 @@ namespace TemporalCollections.Collections
             }
 
             // Ensure deterministic ordering across keys
-            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+            results.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
             return results;
         }
 
@@ -141,8 +137,8 @@ namespace TemporalCollections.Collections
         public TimeSpan GetTimeSpan()
         {
             bool any = false;
-            DateTime min = DateTime.MaxValue;
-            DateTime max = DateTime.MinValue;
+            DateTimeOffset min = DateTimeOffset.MaxValue;
+            DateTimeOffset max = DateTimeOffset.MinValue;
 
             foreach (var kvp in _dict)
             {
@@ -160,7 +156,7 @@ namespace TemporalCollections.Collections
             }
 
             if (!any || min >= max) return TimeSpan.Zero;
-            var span = max - min;
+            var span = max - min; // DateTimeOffset subtraction → TimeSpan
             return span < TimeSpan.Zero ? TimeSpan.Zero : span;
         }
 
@@ -170,8 +166,8 @@ namespace TemporalCollections.Collections
         /// </summary>
         public int CountInRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             var count = 0;
             foreach (var kvp in _dict)
@@ -179,7 +175,11 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    count += list.Count(i => i.Timestamp >= from && i.Timestamp <= to);
+                    count += list.Count(i =>
+                    {
+                        long x = i.Timestamp.UtcTicks;
+                        return f <= x && x <= t;
+                    });
                 }
             }
             return count;
@@ -188,10 +188,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all keys and all their timestamped values from the dictionary.
         /// </summary>
-        public void Clear()
-        {
-            _dict.Clear();
-        }
+        public void Clear() => _dict.Clear();
 
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range
@@ -200,15 +197,19 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void RemoveRange(DateTime from, DateTime to)
         {
-            if (to < from)
-                throw new ArgumentException("to must be >= from", nameof(to));
+            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
             foreach (var kvp in _dict)
             {
                 var list = kvp.Value;
                 lock (list)
                 {
-                    list.RemoveAll(i => i.Timestamp >= from && i.Timestamp <= to);
+                    list.RemoveAll(i =>
+                    {
+                        long x = i.Timestamp.UtcTicks;
+                        return f <= x && x <= t;
+                    });
                     if (list.Count == 0)
                         _dict.TryRemove(kvp.Key, out _);
                 }
@@ -221,7 +222,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public TemporalItem<KeyValuePair<TKey, TValue>>? GetLatest()
         {
-            DateTime bestTs = DateTime.MinValue;
+            DateTimeOffset bestTs = DateTimeOffset.MinValue;
             TKey? bestKey = default!;
             TValue? bestVal = default!;
             bool found = false;
@@ -233,7 +234,7 @@ namespace TemporalCollections.Collections
                 {
                     foreach (var it in list)
                     {
-                        if (!found || it.Timestamp > bestTs)
+                        if (!found || it.Timestamp.UtcTicks > bestTs.UtcTicks)
                         {
                             bestTs = it.Timestamp;
                             bestKey = kvp.Key;
@@ -245,7 +246,9 @@ namespace TemporalCollections.Collections
             }
 
             return found
-                ? new TemporalItem<KeyValuePair<TKey, TValue>>(new KeyValuePair<TKey, TValue>(bestKey, bestVal), bestTs)
+                ? new TemporalItem<KeyValuePair<TKey, TValue>>(
+                    new KeyValuePair<TKey, TValue>(bestKey, bestVal),
+                    bestTs)
                 : null;
         }
 
@@ -255,7 +258,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public TemporalItem<KeyValuePair<TKey, TValue>>? GetEarliest()
         {
-            DateTime bestTs = DateTime.MaxValue;
+            DateTimeOffset bestTs = DateTimeOffset.MaxValue;
             TKey? bestKey = default!;
             TValue? bestVal = default!;
             bool found = false;
@@ -267,7 +270,7 @@ namespace TemporalCollections.Collections
                 {
                     foreach (var it in list)
                     {
-                        if (!found || it.Timestamp < bestTs)
+                        if (!found || it.Timestamp.UtcTicks < bestTs.UtcTicks)
                         {
                             bestTs = it.Timestamp;
                             bestKey = kvp.Key;
@@ -279,7 +282,9 @@ namespace TemporalCollections.Collections
             }
 
             return found
-                ? new TemporalItem<KeyValuePair<TKey, TValue>>(new KeyValuePair<TKey, TValue>(bestKey, bestVal), bestTs)
+                ? new TemporalItem<KeyValuePair<TKey, TValue>>(
+                    new KeyValuePair<TKey, TValue>(bestKey, bestVal),
+                    bestTs)
                 : null;
         }
 
@@ -289,6 +294,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetBefore(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
             foreach (var kvp in _dict)
@@ -298,7 +304,7 @@ namespace TemporalCollections.Collections
                 {
                     foreach (var item in list)
                     {
-                        if (item.Timestamp < time)
+                        if (item.Timestamp.UtcTicks < cutoff)
                         {
                             results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
                                 new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
@@ -308,7 +314,7 @@ namespace TemporalCollections.Collections
                 }
             }
 
-            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+            results.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
             return results;
         }
 
@@ -318,6 +324,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetAfter(DateTime time)
         {
+            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
             foreach (var kvp in _dict)
@@ -327,7 +334,7 @@ namespace TemporalCollections.Collections
                 {
                     foreach (var item in list)
                     {
-                        if (item.Timestamp > time)
+                        if (item.Timestamp.UtcTicks > cutoff)
                         {
                             results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
                                 new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
@@ -337,7 +344,7 @@ namespace TemporalCollections.Collections
                 }
             }
 
-            results.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+            results.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
             return results;
         }
     }
