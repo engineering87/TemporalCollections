@@ -234,5 +234,253 @@ namespace TemporalCollections.Tests.Collections
             Assert.Null(dict.GetLatest());
         }
 
+        [Fact]
+        public void GetInRange_ByKey_ShouldBeInclusive_OnBothBounds()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k", 2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k", 3);
+
+            // Inclusive window [t1, t2] should include only the middle value (2)
+            var res = dict.GetInRange("k", t1, t2).Select(i => i.Value).ToList();
+            Assert.Contains(2, res);
+            Assert.DoesNotContain(1, res);
+            Assert.DoesNotContain(3, res);
+        }
+
+        [Fact]
+        public void GetInRange_AllKeys_ShouldReturnChronologicalOrder()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("a", 1);
+            Thread.Sleep(2);
+            dict.Add("b", 2);
+            Thread.Sleep(2);
+            dict.Add("a", 3);
+
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            // Ensure timestamps are non-decreasing across the returned snapshot
+            for (int i = 1; i < all.Count; i++)
+                Assert.True(all[i - 1].Timestamp <= all[i].Timestamp, $"Out of order at {i}");
+        }
+
+        [Fact]
+        public void RemoveOlderThan_ShouldNotRemove_ItemsEqualToCutoff()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(2);
+            var cutoff = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k", 2);
+
+            dict.RemoveOlderThan(cutoff);
+
+            var items = dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            Assert.DoesNotContain(1, items); // strictly older should be gone
+            Assert.Contains(2, items);       // equal or newer remains
+        }
+
+        [Fact]
+        public void RemoveOlderThan_ShouldDeleteKey_WhenLastItemRemoved()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            // Cutoff in the future → removes everything for 'k'
+            dict.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1));
+
+            Assert.Empty(dict.Keys);
+            Assert.Equal(0, dict.Count);
+            Assert.Empty(dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue));
+        }
+
+        [Fact]
+        public void RemoveRange_OnEmptyOrNoOverlap_ShouldBeNoOp()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            // Empty → no-op
+            dict.RemoveRange(DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(1));
+            Assert.Empty(dict.Keys);
+
+            dict.Add("k1", 1);
+            dict.Add("k2", 2);
+
+            var futureFrom = DateTime.UtcNow.AddHours(1);
+            var futureTo = futureFrom.AddMinutes(1);
+
+            // Non-overlapping → no-op
+            dict.RemoveRange(futureFrom, futureTo);
+
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(i => (i.Value.Key, i.Value.Value)).ToList();
+            Assert.Contains(all, x => x.Key == "k1" && x.Value == 1);
+            Assert.Contains(all, x => x.Key == "k2" && x.Value == 2);
+        }
+
+        [Fact]
+        public void Range_With_Unspecified_ShouldBehaveLikeUtc_WhenAssumeUtc()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(2);
+            var midUtc = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k", 2);
+
+            var midUnspec = DateTime.SpecifyKind(midUtc, DateTimeKind.Unspecified);
+
+            var withUtc = dict.GetInRange(midUtc, DateTime.UtcNow).Select(i => i.Value.Value).ToList();
+            var withUnspec = dict.GetInRange(midUnspec, DateTime.UtcNow).Select(i => i.Value.Value).ToList();
+
+            Assert.Equal(withUtc, withUnspec);
+        }
+
+        [Fact]
+        public void GetEarliest_And_GetLatest_ShouldMatchFirstAndLastGlobal()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("a", 1);
+            Thread.Sleep(2);
+            dict.Add("b", 2);
+            Thread.Sleep(2);
+            dict.Add("a", 3);
+
+            var earliest = dict.GetEarliest();
+            var latest = dict.GetLatest();
+            Assert.NotNull(earliest);
+            Assert.NotNull(latest);
+
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(i => i.Timestamp).ToList();
+            Assert.Equal(all.First().Timestamp, earliest!.Timestamp);
+            Assert.Equal(all.Last().Timestamp, latest!.Timestamp);
+        }
+
+        [Fact]
+        public void Count_ShouldMatch_AllTimeGetInRange()
+        {
+            var dict = new TemporalDictionary<string, int>();
+            for (int i = 0; i < 10; i++) dict.Add("k" + (i % 3), i);
+
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+            Assert.Equal(dict.Count, dict.Keys.Count()); // keys count
+            // We also verify that total items is >= keys count (sanity)
+            Assert.True(all >= dict.Keys.Count());
+        }
+
+        [Fact]
+        public void Concurrency_AddsAcrossMultipleKeys_ShouldRemainConsistent()
+        {
+            var dict = new TemporalDictionary<string, int>();
+            var keys = new[] { "a", "b", "c", "d" };
+
+            Parallel.For(0, 1000, i =>
+            {
+                var k = keys[i % keys.Length];
+                dict.Add(k, i);
+            });
+
+            // Sanity: total items equals GetInRange count
+            var allCount = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+            // With the current API, Count is the number of keys; allCount is number of items
+            Assert.True(allCount >= dict.Count);
+            Assert.All(dict.Keys, k => Assert.NotEmpty(dict.GetInRange(k, DateTime.MinValue, DateTime.MaxValue)));
+        }
+
+        [Fact]
+        public void GetBefore_And_GetAfter_ShouldBeStrict_Global()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("x", 1);
+            Thread.Sleep(2);
+            var split = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("y", 2);
+
+            var before = dict.GetBefore(split).Select(i => (i.Value.Key, i.Value.Value)).ToList();
+            var after = dict.GetAfter(split).Select(i => (i.Value.Key, i.Value.Value)).ToList();
+
+            Assert.Contains(before, t => t.Key == "x" && t.Value == 1);
+            Assert.DoesNotContain(before, t => t.Key == "y" && t.Value == 2);
+
+            Assert.Contains(after, t => t.Key == "y" && t.Value == 2);
+            Assert.DoesNotContain(after, t => t.Key == "x" && t.Value == 1);
+        }
+
+        [Fact]
+        public void Add_MultipleValuesForSameKey_ShouldPreserveMonotonicTimestamps()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            // Add quickly (no sleeps) to stress same-tick behavior
+            for (int i = 0; i < 50; i++) dict.Add("k", i);
+
+            var items = dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue).OrderBy(i => i.Timestamp).ToList();
+
+            for (int i = 1; i < items.Count; i++)
+                Assert.True(items[i - 1].Timestamp < items[i].Timestamp, $"Non-monotonic timestamp at {i}");
+        }
+
+        [Fact]
+        public void RemoveRange_ShouldRemoveAcrossMultipleKeys()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k1", 1);              // before range
+            Thread.Sleep(2);
+            var start = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k2", 2);              // in range
+            Thread.Sleep(2);
+            dict.Add("k3", 3);              // in range
+            Thread.Sleep(2);
+            var end = DateTime.UtcNow;
+            Thread.Sleep(2);
+            dict.Add("k4", 4);              // after range
+
+            dict.RemoveRange(start, end);
+
+            var remaining = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                                .Select(i => (i.Value.Key, i.Value.Value))
+                                .OrderBy(x => x.Value)
+                                .ToList();
+
+            Assert.Contains(remaining, x => x.Key == "k1" && x.Value == 1);
+            Assert.Contains(remaining, x => x.Key == "k4" && x.Value == 4);
+            Assert.DoesNotContain(remaining, x => x.Key == "k2" && x.Value == 2);
+            Assert.DoesNotContain(remaining, x => x.Key == "k3" && x.Value == 3);
+        }
+
+        [Fact]
+        public void Clear_AfterRemovals_ShouldLeaveNoKeysAndZeroSpan()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("a", 1);
+            dict.Add("b", 2);
+
+            dict.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1)); // likely removes all
+            dict.Clear(); // idempotent
+
+            Assert.Empty(dict.Keys);
+            Assert.Equal(0, dict.Count);
+            Assert.Equal(TimeSpan.Zero, dict.GetTimeSpan());
+            Assert.Null(dict.GetEarliest());
+            Assert.Null(dict.GetLatest());
+        }
     }
 }

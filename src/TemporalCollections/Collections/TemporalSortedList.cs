@@ -45,13 +45,13 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                if (_items.Count == 0) return Array.Empty<TemporalItem<T>>();
+                if (_items.Count == 0) return [];
 
-                int start = FindFirstIndexAtOrAfterTicks(f);
-                if (start >= _items.Count) return Array.Empty<TemporalItem<T>>();
+                int start = FindFirstIndexAtOrAfterUtcTicks(f);
+                if (start >= _items.Count) return [];
 
-                int end = FindLastIndexAtOrBeforeTicks(t);
-                if (end < start) return Array.Empty<TemporalItem<T>>();
+                int end = FindLastIndexAtOrBeforeUtcTicks(t);
+                if (end < start) return [];
 
                 int count = end - start + 1;
                 return _items.GetRange(start, count);
@@ -70,7 +70,7 @@ namespace TemporalCollections.Collections
                 if (_items.Count == 0) return;
 
                 // first index with ts >= cutoff  -> remove [0, idx)
-                int idx = FindFirstIndexAtOrAfterTicks(c);
+                int idx = FindFirstIndexAtOrAfterUtcTicks(c);
                 if (idx > 0) _items.RemoveRange(0, idx);
             }
         }
@@ -111,10 +111,10 @@ namespace TemporalCollections.Collections
             {
                 if (_items.Count == 0) return 0;
 
-                int start = FindFirstIndexAtOrAfterTicks(f);
+                int start = FindFirstIndexAtOrAfterUtcTicks(f);
                 if (start >= _items.Count) return 0;
 
-                int end = FindLastIndexAtOrBeforeTicks(t);
+                int end = FindLastIndexAtOrBeforeUtcTicks(t);
                 if (end < start) return 0;
 
                 return end - start + 1;
@@ -142,10 +142,10 @@ namespace TemporalCollections.Collections
             {
                 if (_items.Count == 0) return;
 
-                int start = FindFirstIndexAtOrAfterTicks(f);
+                int start = FindFirstIndexAtOrAfterUtcTicks(f);
                 if (start >= _items.Count) return;
 
-                int end = FindLastIndexAtOrBeforeTicks(t);
+                int end = FindLastIndexAtOrBeforeUtcTicks(t);
                 if (end < start) return;
 
                 int count = end - start + 1;
@@ -187,7 +187,7 @@ namespace TemporalCollections.Collections
             lock (_lock)
             {
                 // first index with ts >= cutoff  → take [0, idx)
-                int idx = FindFirstIndexAtOrAfterTicks(cutoff);
+                int idx = FindFirstIndexAtOrAfterUtcTicks(cutoff);
                 if (idx <= 0) return [];
                 return _items.GetRange(0, idx);
             }
@@ -203,7 +203,7 @@ namespace TemporalCollections.Collections
             lock (_lock)
             {
                 // first index with ts > cutoff → take [idx, end)
-                int idx = FindFirstIndexAfterTicks(cutoff);
+                int idx = FindFirstIndexAfterUtcTicks(cutoff);
                 if (idx >= _items.Count) return [];
                 return _items.GetRange(idx, _items.Count - idx);
             }
@@ -215,7 +215,7 @@ namespace TemporalCollections.Collections
         /// Finds the index of the first element with timestamp.UtcTicks >= targetTicks.
         /// Returns Count if no such element exists.
         /// </summary>
-        private int FindFirstIndexAtOrAfterTicks(long targetTicks)
+        private int FindFirstIndexAtOrAfterUtcTicks(long targetTicks)
         {
             int left = 0;
             int right = _items.Count - 1;
@@ -243,7 +243,7 @@ namespace TemporalCollections.Collections
         /// Finds the index of the first element with timestamp.UtcTicks > targetTicks.
         /// Returns Count if no such element exists.
         /// </summary>
-        private int FindFirstIndexAfterTicks(long targetTicks)
+        private int FindFirstIndexAfterUtcTicks(long targetTicks)
         {
             int left = 0;
             int right = _items.Count - 1;
@@ -271,7 +271,7 @@ namespace TemporalCollections.Collections
         /// Finds the index of the last element with timestamp.UtcTicks <= targetTicks.
         /// Returns -1 if all elements are greater than targetTicks.
         /// </summary>
-        private int FindLastIndexAtOrBeforeTicks(long targetTicks)
+        private int FindLastIndexAtOrBeforeUtcTicks(long targetTicks)
         {
             int left = 0;
             int right = _items.Count - 1;

@@ -26,7 +26,8 @@ namespace TemporalCollections.Collections
         {
             get 
             { 
-                lock (_lock) return _items.Count; 
+                lock (_lock) 
+                    return _items.Count; 
             }
         }
 

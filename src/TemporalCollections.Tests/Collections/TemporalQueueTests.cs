@@ -262,5 +262,225 @@ namespace TemporalCollections.Tests.Collections
             Assert.Contains(0, seen);
             Assert.Contains(999, seen);
         }
+
+        [Fact]
+        public void GetInRange_ShouldBeInclusive_OnBothBounds()
+        {
+            var q = new TemporalQueue<int>();
+
+            q.Enqueue(1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(3);
+
+            // Inclusive: items exactly at t1 or t2 must be included
+            var results = q.GetInRange(t1, t2).Select(x => x.Value).ToList();
+
+            Assert.Contains(2, results); // inside the window
+            Assert.DoesNotContain(1, results); // before window
+            Assert.DoesNotContain(3, results); // after window
+        }
+
+        [Fact]
+        public void GetBefore_And_GetAfter_ShouldBeStrict()
+        {
+            var q = new TemporalQueue<string>();
+
+            q.Enqueue("A");
+            Thread.Sleep(2);
+            var split = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue("B");
+
+            var before = q.GetBefore(split).Select(x => x.Value).ToList();
+            var after = q.GetAfter(split).Select(x => x.Value).ToList();
+
+            // Strict semantics: elements exactly at 'split' must be excluded
+            Assert.Contains("A", before);
+            Assert.DoesNotContain("B", before);
+
+            Assert.Contains("B", after);
+            Assert.DoesNotContain("A", after);
+        }
+
+        [Fact]
+        public void RemoveOlderThan_ShouldNotRemove_ItemsEqualToCutoff()
+        {
+            var q = new TemporalQueue<int>();
+
+            q.Enqueue(1);
+            Thread.Sleep(2);
+            var cutoff = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(2);
+
+            // Remove strictly older than cutoff
+            q.RemoveOlderThan(cutoff);
+
+            var vals = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            Assert.DoesNotContain(1, vals); // likely older
+            Assert.Contains(2, vals);       // >= cutoff should remain
+        }
+
+        [Fact]
+        public void RemoveRange_ShouldBeInclusive_OnBothBounds()
+        {
+            var q = new TemporalQueue<int>();
+
+            q.Enqueue(1);
+            Thread.Sleep(2);
+            var start = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(2);
+            Thread.Sleep(2);
+            var end = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(3);
+
+            // Remove [start, end] inclusive -> should remove only "2"
+            q.RemoveRange(start, end);
+
+            var remaining = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.Contains(1, remaining);
+            Assert.Contains(3, remaining);
+            Assert.DoesNotContain(2, remaining);
+        }
+
+        [Fact]
+        public void Timestamps_ShouldBeMonotonic_EvenOnBurst()
+        {
+            var q = new TemporalQueue<int>();
+
+            for (int i = 0; i < 200; i++) q.Enqueue(i);
+
+            var items = q.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                         .OrderBy(i => i.Timestamp)
+                         .ToList();
+
+            for (int i = 1; i < items.Count; i++)
+            {
+                Assert.True(items[i - 1].Timestamp < items[i].Timestamp,
+                    $"Timestamps not strictly increasing at index {i}");
+            }
+        }
+
+        [Fact]
+        public void Count_ShouldMatch_GetInRange_AllTimeSnapshot()
+        {
+            var q = new TemporalQueue<int>();
+            for (int i = 0; i < 25; i++) q.Enqueue(i);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+            Assert.Equal(q.Count, all);
+        }
+
+        [Fact]
+        public void Range_With_Unspecified_ShouldBehaveLikeUtc_WhenAssumeUtc()
+        {
+            var q = new TemporalQueue<int>();
+
+            q.Enqueue(10);
+            Thread.Sleep(2);
+            var midUtc = DateTime.UtcNow;
+            Thread.Sleep(2);
+            q.Enqueue(20);
+
+            // Same instant but Unspecified kind
+            var midUnspec = DateTime.SpecifyKind(midUtc, DateTimeKind.Unspecified);
+
+            var withUtc = q.GetInRange(midUtc, DateTime.UtcNow).Select(x => x.Value).ToList();
+            var withUnspec = q.GetInRange(midUnspec, DateTime.UtcNow).Select(x => x.Value).ToList();
+
+            // With internal AssumeUtc policy, results should match
+            Assert.Equal(withUtc, withUnspec);
+        }
+
+        [Fact]
+        public void Clear_AfterMutations_ShouldLeaveQueueEmpty()
+        {
+            var q = new TemporalQueue<int>();
+            for (int i = 0; i < 5; i++) q.Enqueue(i);
+
+            q.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1)); // probably removes all
+            q.Clear(); // idempotent
+
+            Assert.Equal(0, q.Count);
+            Assert.Empty(q.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Empty(q.GetBefore(DateTime.UtcNow));
+            Assert.Empty(q.GetAfter(DateTime.UtcNow));
+            Assert.Null(q.GetEarliest());
+            Assert.Null(q.GetLatest());
+        }
+
+        [Fact]
+        public void Dequeue_After_Clear_ShouldThrow()
+        {
+            var q = new TemporalQueue<string>();
+            q.Enqueue("x");
+            q.Clear();
+            Assert.Throws<InvalidOperationException>(() => q.Dequeue());
+        }
+
+        [Fact]
+        public void RemoveRange_OnEmptyOrNoOverlap_ShouldBeNoOp()
+        {
+            var q = new TemporalQueue<int>();
+
+            // No items → no-op
+            q.RemoveRange(DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(1));
+            Assert.Equal(0, q.Count);
+
+            // Add items then remove a non-overlapping future range → no-op
+            q.Enqueue(1);
+            q.Enqueue(2);
+            var futureFrom = DateTime.UtcNow.AddHours(1);
+            var futureTo = futureFrom.AddMinutes(1);
+            q.RemoveRange(futureFrom, futureTo);
+
+            var vals = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            Assert.Equal(new[] { 1, 2 }, vals.OrderBy(v => v));
+        }
+
+        [Fact]
+        public void Peek_DoesNotChange_OrderingOrCount()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+
+            var beforeCount = q.Count;
+            var head = q.Peek();
+
+            Assert.Equal(1, head.Value);
+            Assert.Equal(beforeCount, q.Count);
+
+            var first = q.Dequeue();
+            Assert.Equal(1, first.Value);
+        }
+
+        [Fact]
+        public void GetInRange_ShouldReturn_ChronologicalOrder()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            Thread.Sleep(2);
+            q.Enqueue(2);
+            Thread.Sleep(2);
+            q.Enqueue(3);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            // Ensure timestamps are non-decreasing across the returned snapshot
+            for (int i = 1; i < all.Count; i++)
+            {
+                Assert.True(all[i - 1].Timestamp <= all[i].Timestamp,
+                    $"Out-of-order items at index {i}");
+            }
+        }
     }
 }

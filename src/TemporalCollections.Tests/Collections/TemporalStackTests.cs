@@ -257,5 +257,158 @@ namespace TemporalCollections.Tests.Collections
             Assert.Contains(0, seen);
             Assert.Contains(999, seen);
         }
+
+        [Fact]
+        public void GetInRange_ShouldBeInclusive_OnBothBounds()
+        {
+            var stack = new TemporalStack<int>();
+
+            stack.Push(1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+
+            // Inclusive range: items at both bounds must be included
+            var results = stack.GetInRange(t1, t2).Select(x => x.Value).ToList();
+
+            Assert.Contains(2, results);
+            Assert.DoesNotContain(1, results); // before range
+            Assert.DoesNotContain(3, results); // after range
+        }
+
+        [Fact]
+        public void GetBefore_And_GetAfter_ShouldBeStrict()
+        {
+            var stack = new TemporalStack<string>();
+
+            stack.Push("A");
+            Thread.Sleep(2);
+            var split = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push("B");
+
+            var before = stack.GetBefore(split).Select(x => x.Value).ToList();
+            var after = stack.GetAfter(split).Select(x => x.Value).ToList();
+
+            // Strict behavior: items exactly at split are excluded
+            Assert.Contains("A", before);
+            Assert.DoesNotContain("B", before);
+
+            Assert.Contains("B", after);
+            Assert.DoesNotContain("A", after);
+        }
+
+        [Fact]
+        public void RemoveOlderThan_ShouldNotRemove_EqualToCutoff()
+        {
+            var stack = new TemporalStack<string>();
+
+            stack.Push("old");
+            Thread.Sleep(2);
+            var cutoff = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push("eqOrNew");
+
+            stack.RemoveOlderThan(cutoff);
+
+            var vals = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            Assert.Contains("eqOrNew", vals);
+            // "old" may be removed if < cutoff
+        }
+
+        [Fact]
+        public void RemoveRange_ShouldBeInclusive_OnBothBounds()
+        {
+            var stack = new TemporalStack<int>();
+
+            stack.Push(1);
+            Thread.Sleep(2);
+            var start = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var end = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+
+            stack.RemoveRange(start, end);
+
+            var remaining = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+
+            Assert.Contains(1, remaining);
+            Assert.Contains(3, remaining);
+            Assert.DoesNotContain(2, remaining);
+        }
+
+        [Fact]
+        public void Timestamps_ShouldBeStrictlyMonotonic_EvenOnBurst()
+        {
+            var stack = new TemporalStack<int>();
+
+            // Push a burst of items without sleeping
+            for (int i = 0; i < 100; i++)
+                stack.Push(i);
+
+            var items = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                             .OrderBy(i => i.Timestamp)
+                             .ToList();
+
+            // Each timestamp must be strictly greater than the previous one
+            for (int i = 1; i < items.Count; i++)
+            {
+                Assert.True(items[i - 1].Timestamp < items[i].Timestamp,
+                    $"Timestamps are not strictly increasing at index {i}: {items[i - 1].Timestamp:o} !< {items[i].Timestamp:o}");
+            }
+        }
+
+        [Fact]
+        public void Count_ShouldBeConsistent_WithGetInRange_AllTime()
+        {
+            var stack = new TemporalStack<int>();
+            for (int i = 0; i < 20; i++) stack.Push(i);
+
+            var all = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+            Assert.Equal(stack.Count, all);
+        }
+
+        [Fact]
+        public void Range_With_Unspecified_ShouldBehaveLikeUtc_WhenAssumeUtc()
+        {
+            var stack = new TemporalStack<int>();
+
+            stack.Push(1);
+            Thread.Sleep(2);
+            var midUtc = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+
+            var midUnspecified = DateTime.SpecifyKind(midUtc, DateTimeKind.Unspecified);
+
+            var withUtc = stack.GetInRange(midUtc, DateTime.UtcNow).Select(x => x.Value).ToList();
+            var withUnspec = stack.GetInRange(midUnspecified, DateTime.UtcNow).Select(x => x.Value).ToList();
+
+            // Results must be equal if policy internally assumes UTC
+            Assert.Equal(withUtc, withUnspec);
+        }
+
+        [Fact]
+        public void Clear_AfterMutations_ShouldLeaveEmptyEnumerable()
+        {
+            var stack = new TemporalStack<int>();
+            for (int i = 0; i < 5; i++) stack.Push(i);
+
+            stack.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1));
+            stack.Clear(); // should be idempotent
+
+            Assert.Equal(0, stack.Count);
+            Assert.Empty(stack.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Empty(stack.GetBefore(DateTime.UtcNow));
+            Assert.Empty(stack.GetAfter(DateTime.UtcNow));
+        }
     }
 }

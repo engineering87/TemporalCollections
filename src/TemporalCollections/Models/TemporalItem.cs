@@ -16,7 +16,7 @@ namespace TemporalCollections.Models
         // We use DateTimeOffset.UtcNow.Ticks (100-ns tick resolution) and ensure
         // strictly increasing values via an atomic Compare-Exchange loop.
         // Initialize with current UtcNow ticks to avoid starting at zero.
-        private static long _lastUtcTicks = DateTimeOffset.UtcNow.Ticks;
+        private static long _lastUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
 
         // Legacy shim (UTC)
         public DateTime TimestampUtc => Timestamp.UtcDateTime;
@@ -31,7 +31,7 @@ namespace TemporalCollections.Models
         public static TemporalItem<T> Create(T value)
         {
             // Current wall clock in UTC ticks (offset = 0).
-            long nowTicks = DateTimeOffset.UtcNow.Ticks;
+            long nowTicks = DateTimeOffset.UtcNow.UtcTicks;
 
             long observed; // last observed ticks
             long next;     // candidate next ticks (>= observed + 1)
@@ -66,7 +66,7 @@ namespace TemporalCollections.Models
                 if (y is null) return 1;
 
                 // Primary: timestamp (UTC)
-                int c = x.Timestamp.CompareTo(y.Timestamp);
+                int c = x.Timestamp.UtcTicks.CompareTo(y.Timestamp.UtcTicks);
                 if (c != 0) return c;
 
                 // Secondary: value when comparable.

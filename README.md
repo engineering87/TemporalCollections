@@ -115,7 +115,7 @@ By enforcing this monotonic timestamp ordering, the temporal collections can rel
 - **Thread-safety**: all operations are designed to be thread-safe per collection.
 - **Intervals**: for interval-based collections, the Timestamp used by this interface refers to the interval start.
 
-⚠️ **Since v1.0.0, internal timestamp storage has been migrated from DateTime to DateTimeOffset (UTC). Public APIs remain DateTime for backward compatibility, but internal semantics are now strictly UTC-aware.**
+⚠️ **Since v1.1.0, internal timestamp storage has been migrated from DateTime to DateTimeOffset (UTC). Public APIs remain DateTime for backward compatibility, but internal semantics are now strictly UTC-aware.**
 
 ### Contributing
 Thank you for considering to help out with the source code!

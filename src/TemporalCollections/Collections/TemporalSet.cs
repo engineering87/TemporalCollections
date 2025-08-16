@@ -89,18 +89,12 @@ namespace TemporalCollections.Collections
             var snapshot = _dict.Values.ToList();
             if (snapshot.Count < 2) return TimeSpan.Zero;
 
-            var min = snapshot[0].Timestamp;
-            var max = snapshot[0].Timestamp;
+            long minTicks = snapshot.Min(i => i.Timestamp.UtcTicks);
+            long maxTicks = snapshot.Max(i => i.Timestamp.UtcTicks);
 
-            for (int i = 1; i < snapshot.Count; i++)
-            {
-                var ts = snapshot[i].Timestamp;
-                if (ts < min) min = ts;
-                if (ts > max) max = ts;
-            }
+            long delta = maxTicks - minTicks;
 
-            var span = max - min; // DateTimeOffset subtraction → TimeSpan
-            return span < TimeSpan.Zero ? TimeSpan.Zero : span;
+            return delta > 0 ? TimeSpan.FromTicks(delta) : TimeSpan.Zero;
         }
 
         /// <summary>
@@ -120,7 +114,9 @@ namespace TemporalCollections.Collections
             return count;
         }
 
-        /// <summary>Removes all items from the set.</summary>
+        /// <summary>
+        /// Removes all items from the set.
+        /// </summary>
         public void Clear() => _dict.Clear();
 
         /// <summary>
