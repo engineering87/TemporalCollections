@@ -1,12 +1,13 @@
 # TemporalCollections
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![issues - wart](https://img.shields.io/github/issues/engineering87/TemporalCollections)](https://github.com/engineering87/TemporalCollections/issues)
-[![stars - wart](https://img.shields.io/github/stars/engineering87/TemporalCollections?style=social)](https://github.com/engineering87/TemporalCollections)
+[![Nuget](https://img.shields.io/nuget/v/TemporalCollections?style=plastic)](https://www.nuget.org/packages/TemporalCollections)
+![NuGet Downloads](https://img.shields.io/nuget/dt/TemporalCollections)
+[![issues - temporalcollections](https://img.shields.io/github/issues/engineering87/TemporalCollections)](https://github.com/engineering87/TemporalCollections/issues)
+[![stars - temporalcollections](https://img.shields.io/github/stars/engineering87/TemporalCollections?style=social)](https://github.com/engineering87/TemporalCollections)
 [![Sponsor me](https://img.shields.io/badge/Sponsor-❤-pink)](https://github.com/sponsors/engineering87)
 
 **TemporalCollections** is a high-performance, thread-safe .NET library providing temporal data structures. Each structure associates items with precise insertion timestamps, enabling efficient time-based querying, filtering, and cleanup.
-
 This project is ideal for scenarios where you need to store, query, and manage data with temporal semantics — such as event streams, time-windowed analytics, caching with expiry, or temporal state tracking.
 
 ## Overview
