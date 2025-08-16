@@ -294,10 +294,9 @@ namespace TemporalCollections.Collections
 
         private static Node Insert(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
         {
-            if (node == null)
-                return new Node(start, end, value);
+            if (node == null) return new Node(start, end, value);
 
-            if (start < node.Start)
+            if (start < node.Start || (start == node.Start && end < node.End))
                 node.Left = Insert(node.Left, start, end, value);
             else
                 node.Right = Insert(node.Right, start, end, value);
@@ -346,7 +345,7 @@ namespace TemporalCollections.Collections
                     node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
             }
 
-            return (node, removed: false);
+            return (node, removed);
         }
 
         /// <summary>

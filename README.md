@@ -8,25 +8,26 @@
 [![Sponsor me](https://img.shields.io/badge/Sponsor-❤-pink)](https://github.com/sponsors/engineering87)
 
 **TemporalCollections** is a high-performance, thread-safe .NET library providing temporal data structures. Each structure associates items with precise insertion timestamps, enabling efficient time-based querying, filtering, and cleanup.
-This project is ideal for scenarios where you need to store, query, and manage data with temporal semantics — such as event streams, time-windowed analytics, caching with expiry, or temporal state tracking.
-
----
+This project is ideal for scenarios where you need to store, query, and manage data with temporal semantics, such as event streams, time-windowed analytics, caching with expiry, or temporal state tracking.
 
 ## Table of Contents
 - [Overview](#overview)
 - [Core Concept: `TemporalItem<T>`](#core-concept-temporalitemt)
 - [Available Collections](#available-collections)
 - [Usage Guidance](#usage-guidance)
-- [ITimeQueryable<T> Interface](#itimequeryablet-interface)
+- [ITimeQueryable<T> Interface](#itimequeryable-interface)
   - [Key Methods](#key-methods)
+- [Getting Started with TemporalCollections](#-getting-started-with-temporalcollections)
+  - [Installation](#installation)
+  - [Basic usage](#basic-usage)
+  - [Common queries via `ITimeQueryable<T>`](#common-queries-via-itimequeryablet)
 - [Monotonic Timestamp Guarantee](#monotonic-timestamp-guarantee)
 - [Performance Benchmarks](#-performance-benchmarks)
+- [Threading Model & Big-O Cheatsheet](#threading-model--big-o-cheatsheet)
 - [Notes](#notes)
 - [Contributing](#contributing)
-- [License](#licensee)
+- [License](#license)
 - [Contact](#contact)
-
----
 
 ## Overview
 
@@ -111,6 +112,289 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
 
+## 🚀 Getting Started with TemporalCollections
+This section shows how to install and use **TemporalCollections** in your .NET projects with simple examples.
+
+### Installation
+```bash
+dotnet add package TemporalCollections
+```
+
+### Basic usage
+**TemporalQueue<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var queue = new TemporalQueue<string>();
+
+// Enqueue items (timestamps are assigned automatically)
+queue.Enqueue("event-1");
+queue.Enqueue("event-2");
+
+// Peek oldest (does not remove)
+var oldest = queue.Peek();
+Console.WriteLine($"Oldest: {oldest.Value} @ {oldest.Timestamp}");
+
+// Dequeue oldest (removes)
+var dequeued = queue.Dequeue();
+Console.WriteLine($"Dequeued: {dequeued.Value} @ {dequeued.Timestamp}");
+
+// Query by time range (inclusive)
+var from = DateTime.UtcNow.AddMinutes(-5);
+var to   = DateTime.UtcNow;
+var inRange = queue.GetInRange(from, to);
+foreach (var item in inRange)
+{
+    Console.WriteLine($"In range: {item.Value} @ {item.Timestamp}");
+}
+```
+**TemporalSet<T>**
+
+```csharp
+using System;
+using TemporalCollections.Collections;
+
+var set = new TemporalSet<int>();
+
+set.Add(1);
+set.Add(2);
+set.Add(2);
+
+Console.WriteLine(set.Contains(1));
+
+// Remove older than a cutoff
+var cutoff = DateTime.UtcNow.AddMinutes(-10);
+set.RemoveOlderThan(cutoff);
+
+// Snapshot of all items ordered by timestamp
+var items = set.GetItems();
+```
+
+**TemporalDictionary<TKey, TValue>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var dict = new TemporalDictionary<string, string>();
+
+dict.Add("user:1", "login");
+dict.Add("user:2", "logout");
+dict.Add("user:1", "refresh");
+
+// Range query across all keys
+var from = DateTime.UtcNow.AddMinutes(-1);
+var to   = DateTime.UtcNow.AddMinutes(1);
+var all = dict.GetInRange(from, to);
+
+// Range query for a specific key
+var user1 = dict.GetInRange("user:1", from, to);
+
+// Compute span covered by all events
+var span = dict.GetTimeSpan();
+Console.WriteLine($"Span: {span}");
+
+// Remove a time window across all keys
+dict.RemoveRange(from, to);
+```
+
+**TemporalStack<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var stack = new TemporalStack<string>();
+
+// Push (timestamps assigned automatically, monotonic UTC)
+stack.Push("first");
+stack.Push("second");
+
+// Peek last pushed (does not remove)
+var top = stack.Peek();
+Console.WriteLine($"Top: {top.Value} @ {top.Timestamp}");
+
+// Pop last pushed (removes)
+var popped = stack.Pop();
+Console.WriteLine($"Popped: {popped.Value}");
+
+// Time range query (inclusive)
+var from = DateTime.UtcNow.AddMinutes(-5);
+var to   = DateTime.UtcNow;
+var items = stack.GetInRange(from, to).OrderBy(i => i.Timestamp);
+
+// Remove older than cutoff
+var cutoff = DateTime.UtcNow.AddMinutes(-10);
+stack.RemoveOlderThan(cutoff);
+```
+
+**TemporalSlidingWindowSet<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var window = TimeSpan.FromMinutes(10);
+var swSet = new TemporalSlidingWindowSet<string>(window);
+
+// Add unique items (insertion timestamp recorded)
+swSet.Add("A");
+swSet.Add("B");
+
+// Periodically expire items older than the window
+swSet.RemoveExpired();
+
+// Snapshot (ordered by timestamp)
+var snapshot = swSet.GetItems().ToList();
+
+// Query by time range
+var from = DateTime.UtcNow.AddMinutes(-5);
+var to   = DateTime.UtcNow;
+var inRange = swSet.GetInRange(from, to);
+
+// Manual cleanup by cutoff (if needed)
+swSet.RemoveOlderThan(DateTime.UtcNow.AddMinutes(-30));
+```
+
+**TemporalSortedList<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var list = new TemporalSortedList<int>();
+
+// Add items (kept sorted by timestamp internally)
+list.Add(10);
+list.Add(20);
+list.Add(30);
+
+// Fast range query via binary search (inclusive)
+var from = DateTime.UtcNow.AddSeconds(-30);
+var to   = DateTime.UtcNow;
+var inRange = list.GetInRange(from, to);
+
+// Before / After helpers
+var before = list.GetBefore(DateTime.UtcNow);
+var after  = list.GetAfter(DateTime.UtcNow.AddSeconds(-5));
+
+// Housekeeping
+list.RemoveOlderThan(DateTime.UtcNow.AddMinutes(-1));
+Console.WriteLine($"Span: {list.GetTimeSpan()}");
+```
+
+**TemporalPriorityQueue<TPriority, TValue>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var pq = new TemporalPriorityQueue<int, string>();
+
+// Enqueue with explicit priority (lower number = higher priority)
+pq.Enqueue("high", priority: 1);
+pq.Enqueue("low",  priority: 10);
+
+// TryPeek (does not remove)
+if (pq.TryPeek(out var next))
+{
+    Console.WriteLine($"Peek: {next}");
+}
+
+// TryDequeue (removes highest-priority; stable by insertion time)
+while (pq.TryDequeue(out var val))
+{
+    Console.WriteLine($"Dequeued: {val}");
+}
+
+// Time-based queries are also available
+var from = DateTime.UtcNow.AddMinutes(-5);
+var to   = DateTime.UtcNow;
+var items = pq.GetInRange(from, to);
+
+Console.WriteLine($"Count in range: {pq.CountInRange(from, to)}");
+```
+
+**TemporalCircularBuffer<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+// Fixed-capacity ring buffer; overwrites oldest when full
+var buf = new TemporalCircularBuffer<string>(capacity: 3);
+
+buf.Add("A");
+buf.Add("B");
+buf.Add("C");
+buf.Add("D"); // Overwrites "A"
+
+// Snapshot (oldest -> newest)
+var snapshot = buf.GetSnapshot();
+foreach (var it in snapshot)
+{
+    Console.WriteLine($"{it.Value} @ {it.Timestamp}");
+}
+
+// Range queries
+var from = DateTime.UtcNow.AddMinutes(-5);
+var to   = DateTime.UtcNow;
+var inRange = buf.GetInRange(from, to);
+
+// Remove a time window
+buf.RemoveRange(from, to);
+
+// Cleanup by cutoff (keeps >= cutoff)
+buf.RemoveOlderThan(DateTime.UtcNow.AddMinutes(-1));
+```
+
+**TemporalIntervalTree<T>**
+
+```csharp
+using System;
+using System.Linq;
+using TemporalCollections.Collections;
+
+var tree = new TemporalIntervalTree<string>();
+
+var now = DateTime.UtcNow;
+tree.Insert(now, now.AddMinutes(10), "session:A");
+tree.Insert(now.AddMinutes(5), now.AddMinutes(15), "session:B");
+
+// Overlap query (values only)
+var overlapValues = tree.Query(now.AddMinutes(7), now.AddMinutes(12));
+// Overlap query (with timestamps = interval starts)
+var overlapItems  = tree.GetInRange(now.AddMinutes(7), now.AddMinutes(12));
+
+Console.WriteLine($"Overlaps: {string.Join(", ", overlapValues)}");
+
+// Remove intervals that ended before a cutoff
+tree.RemoveOlderThan(now.AddMinutes(9));
+```
+
+### Common queries via `ITimeQueryable<T>`
+
+```csharp
+var latest   = collection.GetLatest();   // most recent item or null
+var earliest = collection.GetEarliest(); // oldest item or null
+
+var before = collection.GetBefore(DateTime.UtcNow); // strictly <
+var after  = collection.GetAfter(DateTime.UtcNow);  // strictly >
+
+var count = collection.CountInRange(DateTime.UtcNow.AddSeconds(-30), DateTime.UtcNow);
+
+var span = collection.GetTimeSpan(); // latest.Timestamp - earliest.Timestamp (or TimeSpan.Zero)
+```
+
 ## Monotonic Timestamp Guarantee
 A key feature of the temporal collections is the guarantee that timestamps assigned to items are strictly monotonically increasing, even when multiple items are created concurrently or in rapid succession.
 
@@ -132,6 +416,23 @@ We provide detailed performance measurements for all temporal data structures, i
 The full benchmark results are available here: [docs/benchmarks/benchmarks.md](docs/benchmarks/benchmarks.md)
 These benchmarks help compare trade-offs between different collections and guide future optimizations.
 
+## Threading Model & Big-O Cheatsheet
+
+All collections are thread-safe. Locking granularity and common operations (amortized):
+
+| Collection | Locking | Add/Push | Range Query | RemoveOlderThan |
+|---|---|---:|---:|---:|
+| TemporalQueue | single lock around a queue snapshot | O(1) | O(n) | O(k) from head |
+| TemporalStack | single lock; drain & rebuild for window ops | O(1) | O(n) | O(n) |
+| TemporalSet | lock-free dict + per-bucket ops | O(1) avg | O(n) | O(n) |
+| TemporalSortedList | single lock; binary search for ranges | O(n) insert | **O(log n + m)** | O(k) |
+| TemporalPriorityQueue | single lock; `SortedSet` by (priority,timestamp) | O(log n) | O(n) | O(n) |
+| TemporalIntervalTree | single lock; interval overlap pruning | O(log n) avg | **O(log n + m)** | O(n) |
+| TemporalDictionary | concurrent dict + per-list lock | O(1) avg | O(n) | O(n) |
+| TemporalCircularBuffer | single lock; ring overwrite | O(1) | O(n) | O(n) |
+
+`n` = items, `m` = matches, `k` = removed.
+
 ## Notes
 - **Deterministic ordering**: query results are returned in ascending timestamp order.
 - **Snapshot semantics**: methods that return enumerables/lists provide a stable snapshot at call time.
@@ -150,7 +451,7 @@ If you'd like to contribute, please fork, fix, commit and send a pull request fo
  * [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo)
  * [Open an issue](https://github.com/engineering87/TemporalCollections/issues) if you encounter a bug or have a suggestion for improvements/features
 
-### Licensee
+### License
 TemporalCollections source code is available under MIT License, see license in the source.
 
 ### Contact
