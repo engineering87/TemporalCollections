@@ -10,6 +10,24 @@
 **TemporalCollections** is a high-performance, thread-safe .NET library providing temporal data structures. Each structure associates items with precise insertion timestamps, enabling efficient time-based querying, filtering, and cleanup.
 This project is ideal for scenarios where you need to store, query, and manage data with temporal semantics — such as event streams, time-windowed analytics, caching with expiry, or temporal state tracking.
 
+---
+
+## Table of Contents
+- [Overview](#overview)
+- [Core Concept: `TemporalItem<T>`](#core-concept-temporalitemt)
+- [Available Collections](#available-collections)
+- [Usage Guidance](#usage-guidance)
+- [ITimeQueryable<T> Interface](#itimequeryablet-interface)
+  - [Key Methods](#key-methods)
+- [Monotonic Timestamp Guarantee](#monotonic-timestamp-guarantee)
+- [Performance Benchmarks](#-performance-benchmarks)
+- [Notes](#notes)
+- [Contributing](#contributing)
+- [License](#licensee)
+- [Contact](#contact)
+
+---
+
 ## Overview
 
 TemporalCollections provides multiple thread-safe generic collections where Each item is timestamped at insertion using a strictly monotonic UTC clock (`DateTimeOffset.UtcNow`). These collections expose interfaces for querying items based on their timestamps, removing old or expired entries efficiently, and preserving concurrency guarantees.
@@ -108,6 +126,11 @@ This approach ensures:
 - **Thread safety:** The mechanism works correctly across multiple threads without race conditions.
 
 By enforcing this monotonic timestamp ordering, the temporal collections can rely on consistent time-based queries and maintain correct chronological order of items.
+
+## 📈 Performance Benchmarks
+We provide detailed performance measurements for all temporal data structures, including insertion, range queries, and removal operations.  
+The full benchmark results are available here: [docs/benchmarks/benchmarks.md](docs/benchmarks/benchmarks.md)
+These benchmarks help compare trade-offs between different collections and guide future optimizations.
 
 ## Notes
 - **Deterministic ordering**: query results are returned in ascending timestamp order.
