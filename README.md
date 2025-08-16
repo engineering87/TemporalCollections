@@ -12,7 +12,7 @@ This project is ideal for scenarios where you need to store, query, and manage d
 
 ## Overview
 
-TemporalCollections provides multiple thread-safe generic collections where each item is timestamped at insertion using a strictly monotonic clock. These collections expose interfaces for querying items based on their timestamps, removing old or expired entries efficiently, and preserving concurrency guarantees.
+TemporalCollections provides multiple thread-safe generic collections where Each item is timestamped at insertion using a strictly monotonic UTC clock (`DateTimeOffset.UtcNow`). These collections expose interfaces for querying items based on their timestamps, removing old or expired entries efficiently, and preserving concurrency guarantees.
 
 The key design goals are:
 
@@ -25,7 +25,7 @@ The key design goals are:
 
 At the heart of all collections lies the `TemporalItem<T>` struct:
 
-- Wraps an immutable value `T` with a timestamp (`DateTime`) indicating the moment of insertion
+- Wraps an immutable value `T` with a timestamp (`DateTimeOffset`) indicating the moment of insertion
 - Guarantees strictly increasing timestamps even under rapid or concurrent creation, using atomic operations
 - Provides a timestamp comparer for sorting and searching
 
@@ -96,7 +96,7 @@ These methods collectively support efficient and thread-safe temporal queries an
 ## Monotonic Timestamp Guarantee
 A key feature of the temporal collections is the guarantee that timestamps assigned to items are strictly monotonically increasing, even when multiple items are created concurrently or in rapid succession.
 
-This is achieved through the `TemporalItem<T>` record, which uses an atomic compare-and-swap operation on a static internal timestamp counter. When creating a new temporal item, the current UTC timestamp in ticks is retrieved and compared against the last assigned timestamp:
+This is achieved through the `TemporalItem<T>` record, which uses an atomic compare-and-swap operation on a static internal timestamp counter. When creating a new temporal item, the current UTC timestamp in ticks (`DateTimeOffset.UtcTicks`) is retrieved and compared against the last assigned timestamp:
 
 - If the current timestamp is greater than the last one, it is used as-is.
 - If the current timestamp is less than or equal to the last assigned timestamp (e.g., due to rapid creation or clock precision limits), the timestamp is artificially incremented by one tick.
@@ -114,6 +114,8 @@ By enforcing this monotonic timestamp ordering, the temporal collections can rel
 - **Snapshot semantics**: methods that return enumerables/lists provide a stable snapshot at call time.
 - **Thread-safety**: all operations are designed to be thread-safe per collection.
 - **Intervals**: for interval-based collections, the Timestamp used by this interface refers to the interval start.
+
+⚠️ **Since v1.0.0, internal timestamp storage has been migrated from DateTime to DateTimeOffset (UTC). Public APIs remain DateTime for backward compatibility, but internal semantics are now strictly UTC-aware.**
 
 ### Contributing
 Thank you for considering to help out with the source code!
