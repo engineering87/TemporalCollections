@@ -280,5 +280,29 @@ namespace TemporalCollections.Tests.Collections
             var snapshot = buffer.GetSnapshot().Select(i => i.Value).ToList();
             Assert.Equal(new[] { 2, 3, 4 }, snapshot);
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndMatchGetInRange()
+        {
+            var buffer = new TemporalCircularBuffer<int>(10);
+
+            buffer.Add(1);
+            Thread.Sleep(2);
+            buffer.Add(2);
+            Thread.Sleep(2);
+            buffer.Add(3);
+
+            var ordered = buffer.GetSnapshot().OrderBy(i => i.Timestamp).ToList();
+            Assert.True(ordered.Count >= 2);
+
+            // Inclusive cutoff at the 2nd item's timestamp → expect that item and those after
+            var cutoff = ordered[1].Timestamp.UtcDateTime;
+
+            var counted = buffer.CountSince(cutoff);
+            var viaRange = buffer.GetInRange(cutoff, DateTime.UtcNow.AddHours(1)).Count();
+
+            Assert.Equal(ordered.Count - 1, counted);
+            Assert.Equal(viaRange, counted);
+        }
     }
 }

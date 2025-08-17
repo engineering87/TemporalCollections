@@ -211,5 +211,21 @@ namespace TemporalCollections.Tests.Collections
             Assert.Null(set.GetLatest());
             Assert.Equal(TimeSpan.Zero, set.GetTimeSpan());
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        {
+            var (set, _, _, tC, _) = CreateSetABCD();
+
+            // Cutoff at C's timestamp: expect C and D (inclusive)
+            var cutoff = tC.UtcDateTime;
+
+            var countSince = set.CountSince(cutoff);
+            Assert.Equal(2, countSince);
+
+            // Cross-check with GetInRange(cutoff, now)
+            var cross = set.GetInRange(cutoff, DateTime.UtcNow).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

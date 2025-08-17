@@ -246,7 +246,7 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                if (_count == 0) return Array.Empty<TemporalItem<T>>();
+                if (_count == 0) return [];
 
                 var list = new List<TemporalItem<T>>();
                 IterateOrdered(item =>
@@ -268,7 +268,7 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                if (_count == 0) return Array.Empty<TemporalItem<T>>();
+                if (_count == 0) return [];
 
                 var list = new List<TemporalItem<T>>();
                 IterateOrdered(item =>
@@ -277,6 +277,27 @@ namespace TemporalCollections.Collections
                         list.Add(item);
                 });
                 return list;
+            }
+        }
+
+        /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+
+            lock (_lock)
+            {
+                if (_count == 0) return 0;
+
+                int cnt = 0;
+                IterateOrdered(item =>
+                {
+                    if (item.Timestamp.UtcTicks >= f)
+                        cnt++;
+                });
+                return cnt;
             }
         }
 

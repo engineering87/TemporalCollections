@@ -410,5 +410,35 @@ namespace TemporalCollections.Tests.Collections
             Assert.Empty(stack.GetBefore(DateTime.UtcNow));
             Assert.Empty(stack.GetAfter(DateTime.UtcNow));
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndMatchGetInRange()
+        {
+            var stack = new TemporalStack<int>();
+
+            stack.Push(1);
+            Thread.Sleep(5);
+            stack.Push(2);
+            Thread.Sleep(5);
+            stack.Push(3);
+
+            // Build an ordered snapshot to pick a stable cutoff
+            var all = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                           .OrderBy(i => i.Timestamp)
+                           .ToList();
+            Assert.True(all.Count >= 2, "Test requires at least two items.");
+
+            // Use the timestamp of the 2nd item as cutoff; CountSince must be inclusive
+            var cutoff = all[1].Timestamp.UtcDateTime;
+
+            var expected = all.Count - 1; // items at index 1 and 2
+            var countSince = stack.CountSince(cutoff);
+
+            Assert.Equal(expected, countSince);
+
+            // Cross-check with GetInRange(cutoff, now)
+            var cross = stack.GetInRange(cutoff, DateTime.UtcNow).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

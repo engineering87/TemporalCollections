@@ -256,6 +256,18 @@ namespace TemporalCollections.Collections
             }
         }
 
+        /// <summary>
+        /// Counts the number of items with timestamp (Start) greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime since)
+        {
+            var s = TimeNormalization.ToUtcOffset(since, nameof(since), DefaultPolicy);
+            lock (_lock)
+            {
+                return CountWithEndAtOrAfter(_root, s);
+            }
+        }
+
         #region Internal helpers (UTC DateTimeOffset, Treap)
 
         /// <summary>
@@ -559,6 +571,24 @@ namespace TemporalCollections.Collections
             CollectAfter(node.Left, time, acc);
             acc.Add(new TemporalItem<T>(node.Value, node.Start));
             CollectAfter(node.Right, time, acc);
+        }
+
+        private static int CountWithEndAtOrAfter(Node? node, DateTimeOffset cutoff)
+        {
+            if (node is null) return 0;
+
+            int count = 0;
+
+            if (node.Left is not null && node.Left.MaxEnd >= cutoff)
+                count += CountWithEndAtOrAfter(node.Left, cutoff);
+
+            if (node.End >= cutoff)
+                count++;
+
+            if (node.Right is not null && node.Right.MaxEnd >= cutoff)
+                count += CountWithEndAtOrAfter(node.Right, cutoff);
+
+            return count;
         }
 
         #endregion

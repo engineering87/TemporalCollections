@@ -59,5 +59,10 @@ namespace TemporalCollections.Abstractions
         /// Retrieves all items with timestamp after the specified time (exclusive).
         /// </summary>
         IEnumerable<TemporalItem<T>> GetAfter(DateTime time);
+
+        /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        int CountSince(DateTime from);
     }
 }

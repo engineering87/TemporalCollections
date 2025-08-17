@@ -104,5 +104,37 @@ namespace TemporalCollections.Tests.Collections
 
             Assert.True(list.Count <= 2);
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        {
+            var list = new TemporalSortedList<int>();
+
+            list.Add(1);
+            Thread.Sleep(5);
+            list.Add(2);
+            Thread.Sleep(5);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                          .OrderBy(i => i.Timestamp)
+                          .ToList();
+
+            Assert.True(all.Count >= 2, "Need at least two items for a valid cutoff.");
+
+            // Choose timestamp of the 2nd item as cutoff
+            var cutoff = all[1].Timestamp.UtcDateTime;
+
+            // Expected count = items at index 1 and onward
+            var expected = all.Count - 1;
+
+            var countSince = list.CountSince(cutoff);
+
+            Assert.Equal(expected, countSince);
+
+            // Cross-check with GetInRange(cutoff, now)
+            var cross = list.GetInRange(cutoff, DateTime.UtcNow).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

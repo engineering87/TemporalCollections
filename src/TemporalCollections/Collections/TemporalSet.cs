@@ -181,6 +181,22 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+            int count = 0;
+
+            foreach (var item in _dict.Values)
+            {
+                if (item.Timestamp.UtcTicks >= f)
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
         /// Returns the number of items currently in the set.
         /// </summary>
         public int Count => _dict.Count;

@@ -209,6 +209,25 @@ namespace TemporalCollections.Collections
             }
         }
 
+        /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// Runs in O(log n) using binary search on the sorted timestamps.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+
+            lock (_lock)
+            {
+                if (_items.Count == 0) return 0;
+
+                int idx = FindFirstIndexAtOrAfterUtcTicks(f);
+                if (idx >= _items.Count) return 0;
+
+                return _items.Count - idx;
+            }
+        }
+
         #region Internal helpers (binary searches on UtcTicks)
 
         /// <summary>

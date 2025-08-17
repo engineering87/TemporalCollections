@@ -275,5 +275,31 @@ namespace TemporalCollections.Tests.Collections
             Assert.Contains(999, seen);
         }
 
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        {
+            var queue = new TemporalPriorityQueue<int, string>();
+
+            queue.Enqueue("A", 5);
+            Thread.Sleep(5);
+            queue.Enqueue("B", 3);
+            Thread.Sleep(5);
+            queue.Enqueue("C", 1);
+
+            var all = queue.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                           .OrderBy(i => i.Timestamp)
+                           .ToList();
+            Assert.True(all.Count >= 2, "Need at least two items for a valid cutoff.");
+
+            // Inclusive cutoff at the 2nd item's timestamp → expect items at index 1 and onward
+            var cutoff = all[1].Timestamp.UtcDateTime;
+
+            var countSince = queue.CountSince(cutoff);
+            Assert.Equal(all.Count - 1, countSince);
+
+            // Cross-check with GetInRange(cutoff, now)
+            var cross = queue.GetInRange(cutoff, DateTime.UtcNow).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

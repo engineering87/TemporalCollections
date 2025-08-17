@@ -482,5 +482,32 @@ namespace TemporalCollections.Tests.Collections
             Assert.Null(dict.GetEarliest());
             Assert.Null(dict.GetLatest());
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndMatchGetInRange_AllKeys()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k1", 1);
+            Thread.Sleep(5);
+            dict.Add("k2", 2);
+            Thread.Sleep(5);
+            dict.Add("k1", 3);
+
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                          .OrderBy(i => i.Timestamp)
+                          .ToList();
+            Assert.True(all.Count >= 2);
+
+            // Inclusive cutoff at the 2nd item's timestamp → expect that item and those after
+            var cutoff = all[1].Timestamp.UtcDateTime;
+
+            var countSince = dict.CountSince(cutoff);
+            Assert.Equal(all.Count - 1, countSince);
+
+            // Cross-check with inclusive GetInRange
+            var cross = dict.GetInRange(cutoff, DateTime.UtcNow.AddHours(1)).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

@@ -256,5 +256,24 @@ namespace TemporalCollections.Collections
                     .ToList();
             }
         }
+
+        /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+
+            lock (_lock)
+            {
+                int count = 0;
+                foreach (var item in _queue)
+                {
+                    if (item.Timestamp.UtcTicks >= f)
+                        count++;
+                }
+                return count;
+            }
+        }
     }
 }

@@ -347,5 +347,29 @@ namespace TemporalCollections.Collections
             results.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
             return results;
         }
+
+        /// <summary>
+        /// Counts how many items across all keys have timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+            int count = 0;
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                lock (list)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i].Timestamp.UtcTicks >= f)
+                            count++;
+                    }
+                }
+            }
+
+            return count;
+        }
     }
 }

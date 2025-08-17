@@ -482,5 +482,32 @@ namespace TemporalCollections.Tests.Collections
                     $"Out-of-order items at index {i}");
             }
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        {
+            var q = new TemporalQueue<int>();
+
+            q.Enqueue(1);
+            Thread.Sleep(5);
+            q.Enqueue(2);
+            Thread.Sleep(5);
+            q.Enqueue(3);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                       .OrderBy(i => i.Timestamp)
+                       .ToList();
+            Assert.True(all.Count >= 2, "Need at least two items for a valid cutoff.");
+
+            // Use the timestamp of the 2nd item as inclusive cutoff
+            var cutoff = all[1].Timestamp.UtcDateTime;
+
+            var countSince = q.CountSince(cutoff);
+            Assert.Equal(all.Count - 1, countSince); // items at index 1 and onward
+
+            // Cross-check with GetInRange(cutoff, now)
+            var cross = q.GetInRange(cutoff, DateTime.UtcNow).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }

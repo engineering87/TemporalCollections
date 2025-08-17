@@ -281,6 +281,25 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
+        /// </summary>
+        public int CountSince(DateTime from)
+        {
+            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+
+            lock (_lock)
+            {
+                int count = 0;
+                foreach (var item in _set)
+                {
+                    if (item.Timestamp.UtcTicks >= f)
+                        count++;
+                }
+                return count;
+            }
+        }
+
+        /// <summary>
         /// Internal record representing a queue item with priority and timestamp.
         /// </summary>
         private record QueueItem : TemporalItem<TValue>, IComparable<QueueItem>

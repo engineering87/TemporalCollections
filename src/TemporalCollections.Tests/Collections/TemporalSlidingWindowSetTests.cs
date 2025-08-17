@@ -300,5 +300,32 @@ namespace TemporalCollections.Tests.Collections
             Assert.NotNull(latest);
             Assert.True(earliest!.Timestamp <= latest!.Timestamp);
         }
+
+        [Fact]
+        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        {
+            var set = new TemporalSlidingWindowSet<string>(TimeSpan.FromHours(2));
+            var now = DateTime.UtcNow;
+
+            var dictField = typeof(TemporalSlidingWindowSet<string>)
+                .GetField("_dict", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var dict = (System.Collections.Concurrent.ConcurrentDictionary<string, TemporalItem<string>>)dictField!.GetValue(set)!;
+
+            var t1 = now.AddMinutes(-50);
+            var t2 = now.AddMinutes(-20); // cutoff
+            var t3 = now.AddMinutes(-5);
+
+            dict.TryAdd("a", new TemporalItem<string>("a", t1));
+            dict.TryAdd("b", new TemporalItem<string>("b", t2));
+            dict.TryAdd("c", new TemporalItem<string>("c", t3));
+
+            var cutoff = t2;
+
+            var countSince = set.CountSince(cutoff);
+            Assert.Equal(2, countSince);
+
+            var cross = set.GetInRange(cutoff, now).Count();
+            Assert.Equal(cross, countSince);
+        }
     }
 }
