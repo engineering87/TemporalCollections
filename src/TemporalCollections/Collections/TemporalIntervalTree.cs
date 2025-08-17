@@ -10,6 +10,7 @@ namespace TemporalCollections.Collections
     /// A thread-safe interval tree for storing temporal intervals with associated values.
     /// Supports insertion, removal, querying of overlapping intervals and time-based operations via <see cref="ITimeQueryable{T}"/>.
     /// Public API uses DateTime; internal timeline is DateTimeOffset (UTC).
+    /// Treap-balanced (randomized) BST over (Start, End, Value) with augmented MaxEnd for interval queries.
     /// </summary>
     /// <typeparam name="T">The type of the value associated with each interval.</typeparam>
     public class TemporalIntervalTree<T> : ITimeQueryable<T>
@@ -18,9 +19,9 @@ namespace TemporalCollections.Collections
         private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
         /// <summary>
-        /// Represents a single node in the interval tree.
+        /// Represents a single node in the interval tree (Treap node).
         /// </summary>
-        private class Node
+        private sealed class Node
         {
             /// <summary>
             /// Interval start (inclusive), UTC.
@@ -35,17 +36,22 @@ namespace TemporalCollections.Collections
             /// <summary>
             /// Associated value for the interval.
             /// </summary>
-            public T Value;
+            public T Value = default!;
 
             /// <summary>
             /// The maximum End of this node or any of its descendants (UTC).
             /// </summary>
             public DateTimeOffset MaxEnd;
 
+            /// <summary>
+            /// Treap priority (min-heap): lower value means higher priority.
+            /// </summary>
+            public int Priority;
+
             public Node? Left;
             public Node? Right;
 
-            public Node(DateTimeOffset start, DateTimeOffset end, T value)
+            public Node(DateTimeOffset start, DateTimeOffset end, T value, int priority)
             {
                 if (end < start)
                     throw new ArgumentException("End must be >= Start", nameof(end));
@@ -53,12 +59,14 @@ namespace TemporalCollections.Collections
                 Start = start;
                 End = end;
                 Value = value;
+                Priority = priority;
                 MaxEnd = end;
             }
         }
 
         private Node? _root;
         private readonly Lock _lock = new();
+        private readonly Random _rng = new(); // used only under _lock
 
         /// <summary>
         /// Inserts a new interval with an associated value into the tree.
@@ -72,7 +80,7 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                _root = Insert(_root, s, e, value);
+                _root = InsertTreap(_root, s, e, value);
             }
         }
 
@@ -87,7 +95,7 @@ namespace TemporalCollections.Collections
             lock (_lock)
             {
                 bool removed;
-                (_root, removed) = Remove(_root, s, e, value);
+                (_root, removed) = RemoveTreap(_root, s, e, value);
                 return removed;
             }
         }
@@ -186,7 +194,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Clear()
         {
-            lock (_lock) { _root = null; }
+            lock (_lock) 
+            { 
+                _root = null; 
+            }
         }
 
         /// <summary>
@@ -245,107 +256,154 @@ namespace TemporalCollections.Collections
             }
         }
 
-        #region Internal helpers (UTC DateTimeOffset)
+        #region Internal helpers (UTC DateTimeOffset, Treap)
 
         /// <summary>
-        /// Collect TemporalItem<T> for intervals overlapping [qs, qe].
+        /// Total order over (Start, End, Value) to avoid long equal-key chains.
         /// </summary>
-        /// <param name="node"></param>
-        /// <param name="qs"></param>
-        /// <param name="qe"></param>
-        /// <param name="result"></param>
-        private static void QueryCollect(Node? node, DateTimeOffset qs, DateTimeOffset qe, List<TemporalItem<T>> result)
+        private static int CompareKey(DateTimeOffset s1, DateTimeOffset e1, T v1,
+                                      DateTimeOffset s2, DateTimeOffset e2, T v2)
         {
-            if (node is null) return;
+            int c = s1.CompareTo(s2);
+            if (c != 0) return c;
+            c = e1.CompareTo(e2);
+            if (c != 0) return c;
 
-            // left subtree can overlap only if its MaxEnd >= qs
-            if (node.Left is not null && node.Left.MaxEnd >= qs)
-                QueryCollect(node.Left, qs, qe, result);
+            if (EqualityComparer<T>.Default.Equals(v1, v2)) return 0;
 
-            // current node overlaps if Start <= qe && End >= qs
-            if (node.Start <= qe && node.End >= qs)
-                result.Add(new TemporalItem<T>(node.Value, node.Start));
-
-            // right subtree may have starts <= qe
-            if (node.Right is not null && node.Start <= qe)
-                QueryCollect(node.Right, qs, qe, result);
+            int h1 = HashCode.Combine(v1);
+            int h2 = HashCode.Combine(v2);
+            return h1 < h2 ? -1 : (h1 > h2 ? 1 : 0);
         }
 
         /// <summary>
-        /// Collect values for compatibility with "Query" method.
+        /// Recomputes MaxEnd from children and own End.
         /// </summary>
-        /// <param name="node"></param>
-        /// <param name="qs"></param>
-        /// <param name="qe"></param>
-        /// <param name="result"></param>
-        private static void QueryValues(Node? node, DateTimeOffset qs, DateTimeOffset qe, List<T> result)
+        private static void Update(Node n)
         {
-            if (node is null) return;
-
-            if (node.Left is not null && node.Left.MaxEnd >= qs)
-                QueryValues(node.Left, qs, qe, result);
-
-            if (node.Start <= qe && node.End >= qs)
-                result.Add(node.Value);
-
-            if (node.Right is not null && node.Start <= qe)
-                QueryValues(node.Right, qs, qe, result);
+            var max = n.End;
+            if (n.Left is not null && n.Left.MaxEnd > max) max = n.Left.MaxEnd;
+            if (n.Right is not null && n.Right.MaxEnd > max) max = n.Right.MaxEnd;
+            n.MaxEnd = max;
         }
 
-        private static Node Insert(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        private static Node RotateRight(Node y)
         {
-            if (node == null) return new Node(start, end, value);
+            var x = y.Left!;
+            var t2 = x.Right;
 
-            if (start < node.Start || (start == node.Start && end < node.End))
-                node.Left = Insert(node.Left, start, end, value);
+            x.Right = y;
+            y.Left = t2;
+
+            Update(y);
+            Update(x);
+            return x;
+        }
+
+        private static Node RotateLeft(Node x)
+        {
+            var y = x.Right!;
+            var t2 = y.Left;
+
+            y.Left = x;
+            x.Right = t2;
+
+            Update(x);
+            Update(y);
+            return y;
+        }
+
+        /// <summary>
+        /// Treap insert with priority heap property (min-heap).
+        /// </summary>
+        private Node InsertTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        {
+            if (node is null)
+                return new Node(start, end, value, _rng.Next());
+
+            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
+
+            if (cmp < 0)
+            {
+                node.Left = InsertTreap(node.Left, start, end, value);
+                if (node.Left!.Priority < node.Priority)
+                    node = RotateRight(node);
+            }
+            else if (cmp > 0)
+            {
+                node.Right = InsertTreap(node.Right, start, end, value);
+                if (node.Right!.Priority < node.Priority)
+                    node = RotateLeft(node);
+            }
             else
-                node.Right = Insert(node.Right, start, end, value);
+            {
+                // Exact duplicate (Start, End, Value): no-op.
+                return node;
+            }
 
-            node.MaxEnd = MaxDate(node.End,
-                node.Left?.MaxEnd ?? DateTimeOffset.MinValue,
-                node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
-
+            Update(node);
             return node;
         }
 
-        private static (Node? node, bool removed) Remove(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        /// <summary>
+        /// Removes a node matching (start, end, value) using treap deletion:
+        /// rotate the node down according to child priorities until it becomes a leaf, then drop it.
+        /// </summary>
+        private static (Node? node, bool removed) RemoveTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
         {
-            if (node == null) return (null, false);
+            if (node is null) return (null, false);
 
-            bool removed = false;
+            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
 
-            if (start == node.Start && end == node.End && EqualityComparer<T>.Default.Equals(value, node.Value))
+            bool removed;
+            if (cmp < 0)
             {
-                removed = true;
-
-                // Node with at most one child
-                if (node.Left == null) return (node.Right, true);
-                if (node.Right == null) return (node.Left, true);
-
-                // Two children: replace with inorder successor
-                var minNode = FindMin(node.Right);
-                node.Start = minNode.Start;
-                node.End = minNode.End;
-                node.Value = minNode.Value;
-                node.Right = RemoveMin(node.Right);
+                (node.Left, removed) = RemoveTreap(node.Left, start, end, value);
             }
-            else if (start < node.Start)
+            else if (cmp > 0)
             {
-                (node.Left, removed) = Remove(node.Left, start, end, value);
+                (node.Right, removed) = RemoveTreap(node.Right, start, end, value);
             }
             else
             {
-                (node.Right, removed) = Remove(node.Right, start, end, value);
+                // Found target node: delete by rotating down.
+                removed = true;
+                node = DeleteRoot(node);
+                return (node, true);
             }
 
-            if (node != null)
-            {
-                node.MaxEnd = MaxDate(node.End,
-                    node.Left?.MaxEnd ?? DateTimeOffset.MinValue,
-                    node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
-            }
-
+            if (node is not null) Update(node);
             return (node, removed);
+        }
+
+        /// <summary>
+        /// Deletes the root of a treap subtree by rotating it down until it has at most one child, then removing it.
+        /// </summary>
+        private static Node? DeleteRoot(Node node)
+        {
+            if (node.Left is null && node.Right is null)
+                return null;
+
+            if (node.Left is null)
+                return node.Right;
+
+            if (node.Right is null)
+                return node.Left;
+
+            // Both children exist: rotate towards the child with smaller priority (higher heap priority).
+            if (node.Left.Priority < node.Right.Priority)
+            {
+                node = RotateRight(node);
+                node.Right = DeleteRoot(node.Right!);
+            }
+            else
+            {
+                node = RotateLeft(node);
+                node.Left = DeleteRoot(node.Left!);
+            }
+
+            Update(node);
+            return node;
         }
 
         /// <summary>
@@ -366,98 +424,83 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Removes nodes whose End < cutoff and returns new subtree root.
+        /// Removes nodes whose End < cutoff and returns new subtree root (treap-preserving).
         /// </summary>
-        /// <param name="node"></param>
-        /// <param name="cutoff"></param>
-        /// <returns></returns>
         private static Node? RemoveOlderThanInternal(Node? node, DateTimeOffset cutoff)
         {
-            if (node == null) return null;
+            if (node is null) return null;
 
             node.Left = RemoveOlderThanInternal(node.Left, cutoff);
             node.Right = RemoveOlderThanInternal(node.Right, cutoff);
 
             if (node.End < cutoff)
             {
-                // delete this node
-                if (node.Left == null) return node.Right;
-                if (node.Right == null) return node.Left;
-
-                var minNode = FindMin(node.Right);
-                node.Start = minNode.Start;
-                node.End = minNode.End;
-                node.Value = minNode.Value;
-                node.Right = RemoveMin(node.Right);
+                node = DeleteRoot(node);
+                // Ensure that possible replacement at this position is also checked
+                node = RemoveOlderThanInternal(node, cutoff);
+                return node;
             }
 
-            node.MaxEnd = MaxDate(node.End,
-                node.Left?.MaxEnd ?? DateTimeOffset.MinValue,
-                node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
-
-            return node;
-        }
-
-        private static Node FindMin(Node node)
-        {
-            while (node.Left != null) node = node.Left;
-            return node;
-        }
-
-        private static Node? RemoveMin(Node node)
-        {
-            if (node.Left == null)
-                return node.Right;
-
-            node.Left = RemoveMin(node.Left);
-
-            node.MaxEnd = MaxDate(node.End,
-                node.Left?.MaxEnd ?? DateTimeOffset.MinValue,
-                node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
-
+            Update(node);
             return node;
         }
 
         /// <summary>
-        /// Delete a single node and return the new subtree root.
-        /// </summary>
-        /// <param name="node"></param>
-        /// <returns></returns>
-        private static Node? DeleteNode(Node node)
-        {
-            if (node.Left is null) return UpdateMaxEndChain(node.Right);
-            if (node.Right is null) return UpdateMaxEndChain(node.Left);
-
-            var succ = FindMin(node.Right);
-            node.Start = succ.Start;
-            node.End = succ.End;
-            node.Value = succ.Value;
-            node.Right = RemoveMin(node.Right);
-
-            return UpdateMaxEndChain(node);
-        }
-
-        /// <summary>
-        /// Removes nodes whose Start is in [from, to] (inclusive) and returns new subtree root.
+        /// Removes nodes whose Start is in [from, to] (inclusive) and returns new subtree root (treap-preserving).
         /// </summary>
         private static Node? RemoveByStartRange(Node? node, DateTimeOffset from, DateTimeOffset to)
         {
             if (node is null) return null;
 
-            // prune children first
             node.Left = RemoveByStartRange(node.Left, from, to);
             node.Right = RemoveByStartRange(node.Right, from, to);
 
-            // handle current node
             if (node.Start >= from && node.Start <= to)
             {
-                node = DeleteNode(node);
-                // re-run on new root in case replacement also lies in range
+                node = DeleteRoot(node);
                 node = RemoveByStartRange(node, from, to);
-                return node; // Update done in DeleteNode / recursive calls
+                return node;
             }
 
-            return UpdateMaxEndChain(node);
+            Update(node);
+            return node;
+        }
+
+        /// <summary>
+        /// Collect TemporalItem<T> for intervals overlapping [qs, qe].
+        /// </summary>
+        private static void QueryCollect(Node? node, DateTimeOffset qs, DateTimeOffset qe, List<TemporalItem<T>> result)
+        {
+            if (node is null) return;
+
+            // Left subtree can overlap only if its MaxEnd >= qs
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
+                QueryCollect(node.Left, qs, qe, result);
+
+            // Current node overlaps if Start <= qe && End >= qs
+            if (node.Start <= qe && node.End >= qs)
+                result.Add(new TemporalItem<T>(node.Value, node.Start));
+
+            // Right subtree may have starts <= qe
+            if (node.Right is not null && node.Start <= qe)
+                QueryCollect(node.Right, qs, qe, result);
+        }
+
+        /// <summary>
+        /// Collect values for compatibility with "Query" method.
+        /// </summary>
+        private static void QueryValues(Node? node, DateTimeOffset qs, DateTimeOffset qe, List<T> result)
+        {
+            if (node is null) return;
+
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
+                QueryValues(node.Left, qs, qe, result);
+
+            if (node.Start <= qe && node.End >= qs)
+                result.Add(node.Value);
+
+            if (node.Right is not null && node.Start <= qe)
+                QueryValues(node.Right, qs, qe, result);
         }
 
         /// <summary>
@@ -477,26 +520,6 @@ namespace TemporalCollections.Collections
         {
             if (node is null) return null;
             while (node.Right is not null) node = node.Right;
-            return node;
-        }
-
-        private static DateTimeOffset MaxDate(params DateTimeOffset[] dates)
-        {
-            DateTimeOffset max = DateTimeOffset.MinValue;
-            foreach (var d in dates)
-                if (d > max) max = d;
-            return max;
-        }
-
-        /// <summary>
-        /// Recomputes MaxEnd along the current node and returns it.
-        /// </summary>
-        private static Node? UpdateMaxEndChain(Node? node)
-        {
-            if (node is null) return null;
-            node.MaxEnd = MaxDate(node.End,
-                node.Left?.MaxEnd ?? DateTimeOffset.MinValue,
-                node.Right?.MaxEnd ?? DateTimeOffset.MinValue);
             return node;
         }
 
