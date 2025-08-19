@@ -243,6 +243,51 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/>.
+        /// If the set is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
+        /// Complexity: O(n).
+        /// </summary>
+        public TemporalItem<T>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            TemporalItem<T>? best = null;
+            long bestDiff = long.MaxValue;
+
+            foreach (var item in _dict.Values)
+            {
+                long ticks = item.Timestamp.UtcTicks;
+                long diff = ticks >= target ? (ticks - target) : (target - ticks);
+
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    best = item;
+                }
+                else if (diff == bestDiff && best is not null)
+                {
+                    // Tie-break: prefer the later item (>= time).
+                    bool itemIsAfterOrEqual = ticks >= target;
+                    bool bestIsAfterOrEqual = best.Timestamp.UtcTicks >= target;
+
+                    if (itemIsAfterOrEqual && !bestIsAfterOrEqual)
+                    {
+                        best = item;
+                    }
+                    else if (itemIsAfterOrEqual == bestIsAfterOrEqual)
+                    {
+                        // If both on the same side of target, pick the later one for determinism.
+                        if (ticks > best.Timestamp.UtcTicks)
+                            best = item;
+                    }
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>
         /// Gets the current number of items in the set.
         /// </summary>
         public int Count => _dict.Count;

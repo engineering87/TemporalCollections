@@ -301,5 +301,63 @@ namespace TemporalCollections.Tests.Collections
             var cross = queue.GetInRange(cutoff, DateTime.UtcNow).Count();
             Assert.Equal(cross, countSince);
         }
+
+        [Fact]
+        public void TemporalPriorityQueue_GetNearest_WorksAndTiesPreferLater()
+        {
+            DateTime WideFrom = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            DateTime WideTo = new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var pq = new TemporalPriorityQueue<int, string>();
+            pq.Enqueue("A", 2);
+            pq.Enqueue("B", 1);
+            pq.Enqueue("C", 3);
+
+            var all = pq.GetInRange(WideFrom, WideTo).ToList();
+            Assert.True(all.Count >= 3);
+
+            var b = all[1];
+            var c = all[2];
+
+            // Exact lookup on B: should always return B
+            var exact = pq.GetNearest(b.Timestamp.UtcDateTime);
+            Assert.NotNull(exact);
+            Assert.Equal("B", exact!.Value);
+
+            // Compute the delta in ticks between B and C
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0, "Timestamps should be strictly increasing");
+
+            if ((dt & 1L) == 0L)
+            {
+                // Even delta -> there is a true midpoint between B and C
+                // In this tie case, GetNearest should prefer the later item (C).
+                long midTicks = b.Timestamp.UtcTicks + (dt / 2);
+                var mid = new DateTimeOffset(midTicks, TimeSpan.Zero).UtcDateTime;
+
+                var tie = pq.GetNearest(mid);
+                Assert.NotNull(tie);
+                Assert.Equal("C", tie!.Value);
+            }
+            else
+            {
+                // Odd delta -> no exact midpoint (one tick closer to B, the next tick closer to C).
+                // Verify that GetNearest resolves correctly on both sides:
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2); // closer to B
+                long midCeilTicks = midFloorTicks + 1;               // closer to C
+
+                var midFloor = new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime;
+
+                var nearFloor = pq.GetNearest(midFloor);
+                var nearCeil = pq.GetNearest(midCeil);
+
+                Assert.NotNull(nearFloor);
+                Assert.NotNull(nearCeil);
+
+                Assert.Equal("B", nearFloor!.Value);
+                Assert.Equal("C", nearCeil!.Value);
+            }
+        }
     }
 }

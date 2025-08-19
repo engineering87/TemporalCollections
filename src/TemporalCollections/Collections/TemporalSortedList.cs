@@ -228,6 +228,35 @@ namespace TemporalCollections.Collections
             }
         }
 
+        /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/>.
+        /// If the list is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
+        /// Complexity: O(log n).
+        /// </summary>
+        public TemporalItem<T>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            lock (_lock)
+            {
+                int n = _items.Count;
+                if (n == 0) return null;
+
+                // First index with ts >= target (or n if all < target)
+                int idx = FindFirstIndexAtOrAfterUtcTicks(target);
+
+                if (idx == 0) return _items[0];
+                if (idx == n) return _items[n - 1];
+
+                long beforeDiff = target - _items[idx - 1].Timestamp.UtcTicks; // >= 0
+                long afterDiff = _items[idx].Timestamp.UtcTicks - target;     // >= 0
+
+                // Tie-break: prefer the later item (>= time)
+                return (afterDiff <= beforeDiff) ? _items[idx] : _items[idx - 1];
+            }
+        }
+
         #region Internal helpers (binary searches on UtcTicks)
 
         /// <summary>

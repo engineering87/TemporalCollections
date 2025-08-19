@@ -301,6 +301,39 @@ namespace TemporalCollections.Collections
             }
         }
 
+        /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/>.
+        /// If the buffer is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
+        /// Complexity: O(n) snapshot + O(log n) search.
+        /// </summary>
+        public TemporalItem<T>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            lock (_lock)
+            {
+                if (_count == 0) return null;
+
+                // Snapshot in chronological order (oldest -> newest)
+                var arr = new TemporalItem<T>[_count];
+                int k = 0;
+                IterateOrdered(item => arr[k++] = item);
+
+                int n = arr.Length;
+                int idx = LowerBound(arr, target); // first index with ts >= target
+
+                if (idx == 0) return arr[0];
+                if (idx == n) return arr[n - 1];
+
+                long beforeDiff = target - arr[idx - 1].Timestamp.UtcTicks; // >= 0
+                long afterDiff = arr[idx].Timestamp.UtcTicks - target;     // >= 0
+
+                // Tie-break: prefer the later item (>= time)
+                return (afterDiff <= beforeDiff) ? arr[idx] : arr[idx - 1];
+            }
+        }
+
         #region Internal helpers
 
         /// <summary>
@@ -341,6 +374,24 @@ namespace TemporalCollections.Collections
 
             for (int i = 0; i < _count; i++)
                 _buffer[i] = orderedItems[i];
+        }
+
+        /// <summary>
+        /// Finds the index of the first element in <paramref name="arr"/> whose
+        /// Timestamp.UtcTicks is greater than or equal to <paramref name="targetTicks"/>.
+        /// Returns <c>arr.Length</c> if no such element exists.
+        /// </summary>
+        private static int LowerBound(TemporalItem<T>[] arr, long targetTicks)
+        {
+            int l = 0, r = arr.Length; // [l, r)
+            while (l < r)
+            {
+                int m = (l + r) >> 1;
+                long mid = arr[m].Timestamp.UtcTicks;
+                if (mid < targetTicks) l = m + 1;
+                else r = m;
+            }
+            return l;
         }
 
         #endregion

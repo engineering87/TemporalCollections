@@ -636,5 +636,28 @@ namespace TemporalCollections.Tests.Collections
             var cross = tree.GetInRange(cutoff, DateTime.UtcNow.AddHours(1)).Count();
             Assert.Equal(cross, countSince);
         }
+
+        [Fact]
+        public void TemporalIntervalTree_GetNearest_WorksAndTiesPreferLater()
+        {
+            var tree = new TemporalIntervalTree<string>();
+
+            var t0 = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var t1 = t0.AddSeconds(1);
+            var t2 = t0.AddSeconds(2);
+
+            // (end = start + 1s)
+            tree.Insert(t0, t0.AddSeconds(1), "A");
+            tree.Insert(t1, t1.AddSeconds(1), "B");
+            tree.Insert(t2, t2.AddSeconds(1), "C");
+
+            var exact = tree.GetNearest(t1);
+            Assert.Equal("B", exact!.Value);
+
+            // Midpoint between t1 and t2 ->(start >= target) → "C"
+            var mid = new DateTimeOffset((t1.Ticks + t2.Ticks) / 2, TimeSpan.Zero).UtcDateTime;
+            var tie = tree.GetNearest(mid);
+            Assert.Equal("C", tie!.Value);
+        }
     }
 }

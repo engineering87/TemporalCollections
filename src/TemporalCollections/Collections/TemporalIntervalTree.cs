@@ -268,6 +268,36 @@ namespace TemporalCollections.Collections
             }
         }
 
+        /// <summary>
+        /// Returns the interval whose start time is closest to <paramref name="time"/> (using Start as timestamp).
+        /// If the tree is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later interval (Start ≥ time) is returned.
+        /// Complexity: O(h).
+        /// </summary>
+        public TemporalItem<T>? GetNearest(DateTime time)
+        {
+            var target = TimeNormalization.ToUtcOffset(time, nameof(time), DefaultPolicy);
+
+            lock (_lock)
+            {
+                if (_root is null) return null;
+
+                var floor = FindFloorByStart(_root, target); // greatest Start <= target
+                var ceil = FindCeilByStart(_root, target);  // smallest Start >= target
+
+                if (floor is null) return ceil is null ? null : new TemporalItem<T>(ceil.Value, ceil.Start);
+                if (ceil is null) return new TemporalItem<T>(floor.Value, floor.Start);
+
+                long beforeDiff = (long)(target.UtcTicks - floor.Start.UtcTicks); // >= 0
+                long afterDiff = (long)(ceil.Start.UtcTicks - target.UtcTicks);  // >= 0
+
+                // Tie-break: prefer the later one (ceil)
+                return (afterDiff <= beforeDiff)
+                    ? new TemporalItem<T>(ceil.Value, ceil.Start)
+                    : new TemporalItem<T>(floor.Value, floor.Start);
+            }
+        }
+
         #region Internal helpers (UTC DateTimeOffset, Treap)
 
         /// <summary>
@@ -589,6 +619,48 @@ namespace TemporalCollections.Collections
                 count += CountWithEndAtOrAfter(node.Right, cutoff);
 
             return count;
+        }
+
+        /// <summary>
+        /// Finds the node with the greatest Start <= <paramref name="target"/>; returns <c>null</c> if none.
+        /// </summary>
+        private static Node? FindFloorByStart(Node? node, DateTimeOffset target)
+        {
+            Node? res = null;
+            while (node is not null)
+            {
+                if (node.Start > target)
+                {
+                    node = node.Left;
+                }
+                else
+                {
+                    res = node;          // candidate floor
+                    node = node.Right;   // try to get closer (greater Start but still <= target)
+                }
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// Finds the node with the smallest Start >= <paramref name="target"/>; returns <c>null</c> if none.
+        /// </summary>
+        private static Node? FindCeilByStart(Node? node, DateTimeOffset target)
+        {
+            Node? res = null;
+            while (node is not null)
+            {
+                if (node.Start < target)
+                {
+                    node = node.Right;
+                }
+                else
+                {
+                    res = node;         // candidate ceil
+                    node = node.Left;   // try to get closer (smaller Start but still >= target)
+                }
+            }
+            return res;
         }
 
         #endregion

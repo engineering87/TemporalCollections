@@ -227,5 +227,55 @@ namespace TemporalCollections.Tests.Collections
             var cross = set.GetInRange(cutoff, DateTime.UtcNow).Count();
             Assert.Equal(cross, countSince);
         }
+
+        [Fact]
+        public void TemporalSet_GetNearest_WorksAndTiesPreferLater()
+        {
+            var set = new TemporalSet<int>();
+            Assert.True(set.Add(10));
+            Assert.True(set.Add(20));
+            Assert.True(set.Add(30));
+
+            var all = set.GetItems().ToList(); // ordered by timestamp asc
+            Assert.True(all.Count >= 3);
+
+            var b = all[1]; // 20
+            var c = all[2]; // 30
+
+            // Exact hit su B
+            var exact = set.GetNearest(b.Timestamp.UtcDateTime);
+            Assert.NotNull(exact);
+            Assert.Equal(20, exact!.Value);
+
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0, "Timestamps should be strictly increasing");
+
+            if ((dt & 1L) == 0L)
+            {              
+                long midTicks = b.Timestamp.UtcTicks + (dt / 2);
+                var mid = new DateTimeOffset(midTicks, TimeSpan.Zero).UtcDateTime;
+
+                var tie = set.GetNearest(mid);
+                Assert.NotNull(tie);
+                Assert.Equal(30, tie!.Value);
+            }
+            else
+            {
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2);
+                long midCeilTicks = midFloorTicks + 1;
+
+                var midFloor = new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime;
+
+                var nearFloor = set.GetNearest(midFloor);
+                var nearCeil = set.GetNearest(midCeil);
+
+                Assert.NotNull(nearFloor);
+                Assert.NotNull(nearCeil);
+
+                Assert.Equal(20, nearFloor!.Value); // B
+                Assert.Equal(30, nearCeil!.Value);  // C
+            }
+        }
     }
 }

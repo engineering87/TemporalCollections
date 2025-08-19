@@ -379,6 +379,83 @@ namespace TemporalCollections.Collections
             return count;
         }
 
+        /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/> across all keys.
+        /// If the dictionary is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
+        /// Complexity: O(K log N_k) where K is the number of keys and N_k is the items per key.
+        /// </summary>
+        public TemporalItem<KeyValuePair<TKey, TValue>>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            TemporalItem<KeyValuePair<TKey, TValue>>? best = null;
+            long bestDiff = long.MaxValue;
+            bool bestIsAfterOrEqual = false; // for tie-break
+            long bestTicks = long.MinValue;   // secondary tie-break for determinism
+
+            foreach (var kvp in _dict)
+            {
+                var list = kvp.Value;
+                TemporalItem<TValue>? candBefore = null;
+                TemporalItem<TValue>? candAfter = null;
+
+                lock (list)
+                {
+                    int n = list.Count;
+                    if (n == 0) continue;
+
+                    int idx = LowerBound(list, target); // first with ts >= target
+                    if (idx < n) candAfter = list[idx];
+                    if (idx > 0) candBefore = list[idx - 1];
+                }
+
+                // Local compare helper
+                void Consider(TemporalItem<TValue>? it)
+                {
+                    if (it is null) return;
+                    long ticks = it.Timestamp.UtcTicks;
+                    long diff = ticks >= target ? (ticks - target) : (target - ticks);
+                    bool isAfterOrEqual = ticks >= target;
+
+                    if (diff < bestDiff)
+                    {
+                        bestDiff = diff;
+                        bestIsAfterOrEqual = isAfterOrEqual;
+                        bestTicks = ticks;
+                        best = new TemporalItem<KeyValuePair<TKey, TValue>>(
+                            new KeyValuePair<TKey, TValue>(kvp.Key, it.Value),
+                            it.Timestamp);
+                    }
+                    else if (diff == bestDiff && best is not null)
+                    {
+                        // Tie-break 1: prefer later item (>= target)
+                        if (isAfterOrEqual && !bestIsAfterOrEqual)
+                        {
+                            bestIsAfterOrEqual = true;
+                            bestTicks = ticks;
+                            best = new TemporalItem<KeyValuePair<TKey, TValue>>(
+                                new KeyValuePair<TKey, TValue>(kvp.Key, it.Value),
+                                it.Timestamp);
+                        }
+                        // Tie-break 2: if both on same side, prefer the later timestamp for determinism
+                        else if (isAfterOrEqual == bestIsAfterOrEqual && ticks > bestTicks)
+                        {
+                            bestTicks = ticks;
+                            best = new TemporalItem<KeyValuePair<TKey, TValue>>(
+                                new KeyValuePair<TKey, TValue>(kvp.Key, it.Value),
+                                it.Timestamp);
+                        }
+                    }
+                }
+
+                Consider(candBefore);
+                Consider(candAfter);
+            }
+
+            return best;
+        }
+
         #region Internal helpers
 
         /// <summary>

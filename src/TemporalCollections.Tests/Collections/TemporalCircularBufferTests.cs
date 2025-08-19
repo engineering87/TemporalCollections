@@ -304,5 +304,55 @@ namespace TemporalCollections.Tests.Collections
             Assert.Equal(ordered.Count - 1, counted);
             Assert.Equal(viaRange, counted);
         }
+
+        [Fact]
+        public void TemporalCircularBuffer_GetNearest_WorksAndTiesPreferLater()
+        {
+            var buf = new TemporalCircularBuffer<string>(capacity: 4);
+            buf.Add("A");
+            buf.Add("B");
+            buf.Add("C");
+
+            var snap = buf.GetSnapshot().ToList(); // oldest -> newest
+            Assert.True(snap.Count >= 3);
+
+            var b = snap[1]; // "B"
+            var c = snap[2]; // "C"
+
+            // Exact sul timestamp di B
+            var exact = buf.GetNearest(b.Timestamp.UtcDateTime);
+            Assert.NotNull(exact);
+            Assert.Equal("B", exact!.Value);
+
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0, "Timestamps should be strictly increasing");
+
+            if ((dt & 1L) == 0L)
+            {
+                long midTicks = b.Timestamp.UtcTicks + (dt / 2);
+                var mid = new DateTimeOffset(midTicks, TimeSpan.Zero).UtcDateTime;
+
+                var tie = buf.GetNearest(mid);
+                Assert.NotNull(tie);
+                Assert.Equal("C", tie!.Value);
+            }
+            else
+            {
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2);
+                long midCeilTicks = midFloorTicks + 1;
+
+                var midFloor = new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime;
+
+                var nearFloor = buf.GetNearest(midFloor);
+                var nearCeil = buf.GetNearest(midCeil);
+
+                Assert.NotNull(nearFloor);
+                Assert.NotNull(nearCeil);
+
+                Assert.Equal("B", nearFloor!.Value);
+                Assert.Equal("C", nearCeil!.Value);
+            }
+        }
     }
 }

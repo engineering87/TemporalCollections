@@ -327,5 +327,57 @@ namespace TemporalCollections.Tests.Collections
             var cross = set.GetInRange(cutoff, now).Count();
             Assert.Equal(cross, countSince);
         }
+
+        [Fact]
+        public void TemporalSlidingWindowSet_GetNearest_WorksAndTiesPreferLater()
+        {
+            var set = new TemporalSlidingWindowSet<string>(TimeSpan.FromMinutes(10));
+            set.Add("A");
+            set.Add("B");
+            set.Add("C");
+
+            var all = set.GetItems().ToList(); // ordered asc by timestamp
+            Assert.True(all.Count >= 3);
+
+            var b = all[1]; // "B"
+            var c = all[2]; // "C"
+
+            // Exact hit on B
+            var exact = set.GetNearest(b.Timestamp.UtcDateTime);
+            Assert.NotNull(exact);
+            Assert.Equal("B", exact!.Value);
+
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0, "Timestamps should be strictly increasing");
+
+            if ((dt & 1L) == 0L)
+            {
+                // Delta even: true midpoint exists -> tie-break should prefer later (C)
+                long midTicks = b.Timestamp.UtcTicks + (dt / 2);
+                var mid = new DateTimeOffset(midTicks, TimeSpan.Zero).UtcDateTime;
+
+                var tie = set.GetNearest(mid);
+                Assert.NotNull(tie);
+                Assert.Equal("C", tie!.Value);
+            }
+            else
+            {
+                // Delta odd: no true tie. Test both sides around midpoint
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2); // nearer to B
+                long midCeilTicks = midFloorTicks + 1;                // nearer to C
+
+                var midFloor = new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime;
+
+                var nearFloor = set.GetNearest(midFloor);
+                var nearCeil = set.GetNearest(midCeil);
+
+                Assert.NotNull(nearFloor);
+                Assert.NotNull(nearCeil);
+
+                Assert.Equal("B", nearFloor!.Value);
+                Assert.Equal("C", nearCeil!.Value);
+            }
+        }
     }
 }

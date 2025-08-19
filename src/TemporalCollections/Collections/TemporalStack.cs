@@ -274,5 +274,58 @@ namespace TemporalCollections.Collections
                 return count;
             }
         }
+
+        /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/>.
+        /// If the stack is empty, returns <c>null</c>.
+        /// In case of a tie (equal distance before/after), the later item (>= time) is returned.
+        /// Complexity: O(log n).
+        /// </summary>
+        public TemporalItem<T>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            lock (_lock)
+            {
+                int n = _items.Count;
+                if (n == 0) return null;
+
+                // First index with ts >= target (or n if all < target)
+                int idx = LowerBoundUtcTicks(target);
+
+                if (idx == 0) return _items[0];
+                if (idx == n) return _items[n - 1];
+
+                long beforeDiff = target - _items[idx - 1].Timestamp.UtcTicks; // >= 0
+                long afterDiff = _items[idx].Timestamp.UtcTicks - target;     // >= 0
+
+                // Tie-break: prefer the later item (>= time)
+                return (afterDiff <= beforeDiff) ? _items[idx] : _items[idx - 1];
+            }
+        }
+
+        #region Internal helpers
+
+        /// <summary>
+        /// Finds the index of the first element with Timestamp.UtcTicks >= <paramref name="targetTicks"/>.
+        /// Returns the count if no such element exists.
+        /// </summary>
+        private int LowerBoundUtcTicks(long targetTicks)
+        {
+            int left = 0;
+            int right = _items.Count;
+            while (left < right)
+            {
+                int mid = (left + right) >> 1;
+                long midTicks = _items[mid].Timestamp.UtcTicks;
+                if (midTicks < targetTicks)
+                    left = mid + 1;
+                else
+                    right = mid;
+            }
+            return left;
+        }
+
+        #endregion
     }
 }

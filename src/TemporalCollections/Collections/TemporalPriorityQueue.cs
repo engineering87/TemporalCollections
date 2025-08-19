@@ -300,6 +300,55 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Returns the item whose timestamp is closest to <paramref name="time"/>.
+        /// If the queue is empty, returns <c>null</c>.
+        /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
+        /// Complexity: O(n).
+        /// </summary>
+        public TemporalItem<TValue>? GetNearest(DateTime time)
+        {
+            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+
+            lock (_lock)
+            {
+                if (_set.Count == 0) return null;
+
+                QueueItem? best = null;
+                long bestDiff = long.MaxValue;
+
+                foreach (var qi in _set)
+                {
+                    long ticks = qi.Timestamp.UtcTicks;
+                    long diff = ticks >= target ? (ticks - target) : (target - ticks);
+
+                    if (diff < bestDiff)
+                    {
+                        bestDiff = diff;
+                        best = qi;
+                    }
+                    else if (diff == bestDiff && best is not null)
+                    {
+                        // Tie-break: prefer the later item (>= time).
+                        bool itemAfterOrEq = ticks >= target;
+                        bool bestAfterOrEq = best.Timestamp.UtcTicks >= target;
+
+                        if (itemAfterOrEq && !bestAfterOrEq)
+                        {
+                            best = qi;
+                        }
+                        else if (itemAfterOrEq == bestAfterOrEq && ticks > best.Timestamp.UtcTicks)
+                        {
+                            // Determinism when both are on the same side: pick the later one.
+                            best = qi;
+                        }
+                    }
+                }
+
+                return best is null ? null : new TemporalItem<TValue>(best.Value, best.Timestamp);
+            }
+        }
+
+        /// <summary>
         /// Internal record representing a queue item with priority and timestamp.
         /// </summary>
         private record QueueItem : TemporalItem<TValue>, IComparable<QueueItem>

@@ -64,5 +64,11 @@ namespace TemporalCollections.Abstractions
         /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
         /// </summary>
         int CountSince(DateTime from);
+
+        /// <summary>
+        /// Retrieves the item whose timestamp is closest to the specified <paramref name="time"/>.
+        /// Returns <c>null</c> if the collection is empty.
+        /// </summary>
+        TemporalItem<T>? GetNearest(DateTime time);
     }
 }

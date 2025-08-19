@@ -44,12 +44,15 @@ namespace TemporalCollections.Tests.Collections
         {
             var dict = new TemporalDictionary<string, int>();
 
+            var t0 = DateTime.UtcNow;
             dict.Add("k1", 1);
             Thread.Sleep(10);
             dict.Add("k2", 2);
+            var t1 = DateTime.UtcNow;
 
-            var from = DateTime.UtcNow.AddMilliseconds(-20);
-            var to = DateTime.UtcNow.AddMilliseconds(20);
+            // little threshold
+            var from = t0.AddMilliseconds(-5);
+            var to = t1.AddMilliseconds(+5);
 
             var results = dict.GetInRange(from, to).ToList();
 
@@ -508,6 +511,69 @@ namespace TemporalCollections.Tests.Collections
             // Cross-check with inclusive GetInRange
             var cross = dict.GetInRange(cutoff, DateTime.UtcNow.AddHours(1)).Count();
             Assert.Equal(cross, countSince);
+        }
+
+        [Fact]
+        public void TemporalDictionary_GetNearest_WorksAndTiesPreferLater()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k1", 1);
+            dict.Add("k2", 2);
+            dict.Add("k1", 3);
+
+            var all = dict.GetInRange(
+                new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            ).ToList();
+
+            Assert.True(all.Count >= 3);
+
+            var b = all[1]; // value=2
+            var c = all[2]; // value=3
+
+            // Exact hit on B
+            var exact = dict.GetNearest(b.Timestamp.UtcDateTime);
+            Assert.NotNull(exact);
+            Assert.Equal(b.Value.Value, exact!.Value.Value);
+            Assert.Equal(b.Value.Key, exact.Value.Key);
+
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0, "Timestamps should be strictly increasing");
+
+            if ((dt & 1L) == 0L)
+            {
+                // Delta even: true midpoint exists -> tie-break should prefer later (C)
+                long midTicks = b.Timestamp.UtcTicks + (dt / 2);
+                var mid = new DateTimeOffset(midTicks, TimeSpan.Zero).UtcDateTime;
+
+                var tie = dict.GetNearest(mid);
+                Assert.NotNull(tie);
+                Assert.Equal(c.Value.Value, tie!.Value.Value);
+                Assert.Equal(c.Value.Key, tie.Value.Key);
+            }
+            else
+            {
+                // Delta odd: no true tie; test both sides around the midpoint
+
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2);        // floor -> nearer to B
+                long midCeilTicks = midFloorTicks + 1;                       // ceil  -> nearer to C
+
+                var midFloor = new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime;
+
+                var nearFloor = dict.GetNearest(midFloor);
+                var nearCeil = dict.GetNearest(midCeil);
+
+                Assert.NotNull(nearFloor);
+                Assert.NotNull(nearCeil);
+
+                Assert.Equal(b.Value.Value, nearFloor!.Value.Value);
+                Assert.Equal(b.Value.Key, nearFloor.Value.Key);
+
+                Assert.Equal(c.Value.Value, nearCeil!.Value.Value);
+                Assert.Equal(c.Value.Key, nearCeil.Value.Key);
+            }
         }
     }
 }
