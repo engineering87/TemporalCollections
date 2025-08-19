@@ -110,6 +110,12 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **GetAfter(DateTime time)**  
   Returns all items with `Timestamp > time` (strictly after), ordered by ascending timestamp.
 
+- **CountSince(DateTime from)**  
+  Counts the number of items with timestamp greater than or equal to the specified cutoff.
+
+- **GetNearest(DateTime time)**  
+  Retrieves the item whose timestamp is closest to the specified `time`.
+
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
 
 ## 🚀 Getting Started with TemporalCollections
