@@ -23,16 +23,21 @@ namespace TemporalCollections.Collections
         // Centralized policy for DateTimeKind.Unspecified handling.
         private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
+        private static readonly IComparer<TemporalItem<TValue>> TimestampOnlyComparer
+            = new TimestampOnlyComparerImpl();
+
         /// <summary>
         /// Adds a new value associated with the specified key, timestamped with the current UTC time.
         /// </summary>
         public void Add(TKey key, TValue value)
         {
-            var temporalItem = TemporalItem<TValue>.Create(value); // DateTimeOffset UTC, monotonic
+            var temporalItem = TemporalItem<TValue>.Create(value);
             var list = _dict.GetOrAdd(key, _ => []);
             lock (list)
             {
-                list.Add(temporalItem);
+                int idx = list.BinarySearch(temporalItem, TimestampOnlyComparer);
+                if (idx < 0) idx = ~idx;
+                list.Insert(idx, temporalItem);
             }
         }
 
@@ -42,24 +47,26 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTime from, DateTime to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            var (f, t) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            if (!_dict.TryGetValue(key, out var list)) yield break;
 
-            if (_dict.TryGetValue(key, out var list))
+            List<TemporalItem<TValue>> snapshot;
+            lock (list)
             {
-                lock (list)
-                {
-                    return list
-                        .Where(item =>
-                        {
-                            long x = item.Timestamp.UtcTicks;
-                            return f <= x && x <= t;
-                        })
-                        .OrderBy(item => item.Timestamp.UtcTicks)
-                        .ToList();
-                }
+                if (list.Count == 0) yield break;
+
+                int lo = LowerBound(list, f.UtcTicks);
+                int hi = UpperBound(list, t.UtcTicks) - 1;
+                if (lo > hi) yield break;
+
+                int count = hi - lo + 1;
+                snapshot = new List<TemporalItem<TValue>>(count);
+                for (int i = lo; i <= hi; i++) 
+                    snapshot.Add(list[i]);
             }
-            return [];
+
+            foreach (var item in snapshot) 
+                yield return item;
         }
 
         /// <summary>
@@ -370,6 +377,60 @@ namespace TemporalCollections.Collections
             }
 
             return count;
+        }
+
+        #region Internal helpers
+
+        /// <summary>
+        /// Finds the index of the first element in the list whose timestamp
+        /// is greater than or equal to the specified <paramref name="ticks"/>.
+        /// </summary>
+        /// <param name="list">The sorted list of temporal items to search.</param>
+        /// <param name="ticks">The UTC ticks (100-ns units) to compare against.</param>
+        /// <returns>
+        /// The zero-based index of the first element with <c>UtcTicks &gt;= ticks</c>;
+        /// if all elements are smaller, returns <c>list.Count</c>.
+        /// </returns>
+        private static int LowerBound(List<TemporalItem<TValue>> list, long ticks)
+        {
+            int l = 0, r = list.Count;
+            while (l < r)
+            {
+                int m = (l + r) >> 1;
+                if (list[m].Timestamp.UtcTicks < ticks) l = m + 1;
+                else r = m;
+            }
+            return l;
+        }
+
+        /// <summary>
+        /// Finds the index of the first element in the list whose timestamp
+        /// is strictly greater than the specified <paramref name="ticks"/>.
+        /// </summary>
+        /// <param name="list">The sorted list of temporal items to search.</param>
+        /// <param name="ticks">The UTC ticks (100-ns units) to compare against.</param>
+        /// <returns>
+        /// The zero-based index of the first element with <c>UtcTicks &gt; ticks</c>;
+        /// if no such element exists, returns <c>list.Count</c>.
+        /// </returns>
+        private static int UpperBound(List<TemporalItem<TValue>> list, long ticks)
+        {
+            int l = 0, r = list.Count;
+            while (l < r)
+            {
+                int m = (l + r) >> 1;
+                if (list[m].Timestamp.UtcTicks <= ticks) l = m + 1;
+                else r = m;
+            }
+            return l;
+        }
+
+        #endregion
+
+        private sealed class TimestampOnlyComparerImpl : IComparer<TemporalItem<TValue>>
+        {
+            public int Compare(TemporalItem<TValue>? x, TemporalItem<TValue>? y)
+                => x!.Timestamp.UtcTicks.CompareTo(y!.Timestamp.UtcTicks);
         }
     }
 }
