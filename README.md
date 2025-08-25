@@ -4,6 +4,7 @@
 [![Nuget](https://img.shields.io/nuget/v/TemporalCollections?style=plastic)](https://www.nuget.org/packages/TemporalCollections)
 ![NuGet Downloads](https://img.shields.io/nuget/dt/TemporalCollections)
 [![issues - temporalcollections](https://img.shields.io/github/issues/engineering87/TemporalCollections)](https://github.com/engineering87/TemporalCollections/issues)
+[![CodeQL](https://github.com/engineering87/TemporalCollections/actions/workflows/codeql.yml/badge.svg)](https://github.com/engineering87/TemporalCollections/actions/workflows/codeql.yml)
 [![stars - temporalcollections](https://img.shields.io/github/stars/engineering87/TemporalCollections?style=social)](https://github.com/engineering87/TemporalCollections)
 [![Sponsor me](https://img.shields.io/badge/Sponsor-❤-pink)](https://github.com/sponsors/engineering87)
 
