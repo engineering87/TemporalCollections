@@ -81,13 +81,13 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 
 ### Key Methods
 
-- **GetInRange(DateTime from, DateTime to)**  
+- **GetInRange(DateTimeOffset from, DateTimeOffset to)**  
   Returns an enumerable of temporal items whose timestamps fall within the inclusive range `[from, to]`. This allows filtering the collection by any desired time window.
 
-- **RemoveOlderThan(DateTime cutoff)**  
+- **RemoveOlderThan(DateTimeOffset cutoff)**  
   Removes all items with timestamps strictly older than the specified `cutoff` time (`Timestamp < cutoff`). This method is useful for pruning outdated data and maintaining collection size.
 
-- **CountInRange(DateTime from, DateTime to)**  
+- **CountInRange(DateTimeOffset from, DateTimeOffset to)**  
   Returns the number of items with timestamps in the inclusive range `[from, to]`. Throws if to < from.
 
 - **GetTimeSpan()**  
@@ -96,7 +96,7 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **Clear()**  
   Removes all items from the collection.
 
-- **RemoveRange(DateTime from, DateTime to)**  
+- **RemoveRange(DateTimeOffset from, DateTimeOffset to)**  
   Removes all items with timestamps in the inclusive range `[from, to]`. Throws if `to < from`.
 
 - **GetLatest()**  
@@ -105,16 +105,16 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **GetEarliest()**  
   Returns the oldest item (min timestamp), or null if empty.
 
-- **GetBefore(DateTime time)**  
+- **GetBefore(DateTimeOffset time)**  
   Returns all items with `Timestamp < time` (strictly before), ordered by ascending timestamp.
 
-- **GetAfter(DateTime time)**  
+- **GetAfter(DateTimeOffset time)**  
   Returns all items with `Timestamp > time` (strictly after), ordered by ascending timestamp.
 
-- **CountSince(DateTime from)**  
+- **CountSince(DateTimeOffset from)**  
   Counts the number of items with timestamp greater than or equal to the specified cutoff.
 
-- **GetNearest(DateTime time)**  
+- **GetNearest(DateTimeOffset time)**  
   Retrieves the item whose timestamp is closest to the specified `time`.
 
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
@@ -458,8 +458,8 @@ If you'd like to contribute, please fork, fix, commit and send a pull request fo
  * [Fork the repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo)
  * [Open an issue](https://github.com/engineering87/TemporalCollections/issues) if you encounter a bug or have a suggestion for improvements/features
 
-### License
+## License
 TemporalCollections source code is available under MIT License, see license in the source.
 
-### Contact
+## Contact
 Please contact at francesco.delre[at]protonmail.com for any details.

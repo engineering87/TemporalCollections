@@ -2,7 +2,6 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
-using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
@@ -11,23 +10,20 @@ namespace TemporalCollections.Collections
     /// enabling time-based queries and cleanups while keeping public method signatures in DateTime.
     /// </summary>
     /// <typeparam name="T">Type of the items stored in the stack.</typeparam>
-    public class TemporalStack<T> : ITimeQueryable<T>
+    public class TemporalStack<T> : TimeQueryableBase<T>
     {
         private readonly List<TemporalItem<T>> _items = [];
         private readonly Lock _lock = new();
-
-        // Centralize how Unspecified DateTimes are handled.
-        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
         /// <summary>
         /// Gets the number of items currently in the stack (O(1)).
         /// </summary>
         public int Count
         {
-            get 
-            { 
-                lock (_lock) 
-                    return _items.Count; 
+            get
+            {
+                lock (_lock)
+                    return _items.Count;
             }
         }
 
@@ -37,7 +33,7 @@ namespace TemporalCollections.Collections
         public void Push(T item)
         {
             var temporalItem = TemporalItem<T>.Create(item);
-            lock (_lock) 
+            lock (_lock)
                 _items.Add(temporalItem);
         }
 
@@ -73,16 +69,22 @@ namespace TemporalCollections.Collections
         /// Retrieves all items whose timestamps are within the inclusive range [from, to].
         /// Returned items are ordered by ascending timestamp.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
+        public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
+
+            long f = from.UtcTicks;
+            long t = to.UtcTicks;
+
+            if (f > t)
+                (f, t) = (t, f);
 
             lock (_lock)
             {
                 if (_items.Count == 0) return [];
 
                 return _items
-                    .Where(i => fromUtc.UtcTicks <= i.Timestamp.UtcTicks && i.Timestamp.UtcTicks <= toUtc.UtcTicks)
+                    .Where(i => f <= i.Timestamp.UtcTicks && i.Timestamp.UtcTicks <= t)
                     .OrderBy(i => i.Timestamp.UtcTicks)
                     .ToList();
             }
@@ -92,9 +94,9 @@ namespace TemporalCollections.Collections
         /// Removes all items with Timestamp &lt; cutoff (exclusive).
         /// Complexity: O(n).
         /// </summary>
-        public void RemoveOlderThan(DateTime cutoff)
+        public override void RemoveOlderThan(DateTimeOffset cutoff)
         {
-            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+            long c = cutoff.UtcTicks;
 
             lock (_lock)
             {
@@ -109,7 +111,7 @@ namespace TemporalCollections.Collections
         /// Calculates the time span between the earliest and latest timestamps.
         /// Returns TimeSpan.Zero if fewer than two items.
         /// </summary>
-        public TimeSpan GetTimeSpan()
+        public override TimeSpan GetTimeSpan()
         {
             lock (_lock)
             {
@@ -133,14 +135,17 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Counts items with timestamps in [from, to] (inclusive).
         /// </summary>
-        public int CountInRange(DateTime from, DateTime to)
+        public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
+            long f = from.UtcTicks;
+            long t = to.UtcTicks;
+
+            if (f > t)
+                (f, t) = (t, f);
 
             lock (_lock)
             {
                 int count = 0;
-                long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
 
                 for (int i = 0; i < _items.Count; i++)
                 {
@@ -154,7 +159,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all items.
         /// </summary>
-        public void Clear()
+        public override void Clear()
         {
             lock (_lock) _items.Clear();
         }
@@ -162,10 +167,15 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all items with timestamps in [from, to] (inclusive).
         /// </summary>
-        public void RemoveRange(DateTime from, DateTime to)
+        public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, unspecifiedPolicy: DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
+
+            long f = from.UtcTicks;
+            long t = to.UtcTicks;
+
+            if (f > t)
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -181,7 +191,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Gets the most recent item by timestamp, or null if empty. O(n).
         /// </summary>
-        public TemporalItem<T>? GetLatest()
+        public override TemporalItem<T>? GetLatest()
         {
             lock (_lock)
             {
@@ -202,7 +212,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Gets the earliest item by timestamp, or null if empty. O(n).
         /// </summary>
-        public TemporalItem<T>? GetEarliest()
+        public override TemporalItem<T>? GetEarliest()
         {
             lock (_lock)
             {
@@ -223,9 +233,9 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Gets all items strictly before <paramref name="time"/>, ordered by ascending timestamp.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
+        public override IEnumerable<TemporalItem<T>> GetBefore(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
 
             lock (_lock)
             {
@@ -241,9 +251,9 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Gets all items strictly after <paramref name="time"/>, ordered by ascending timestamp.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
+        public override IEnumerable<TemporalItem<T>> GetAfter(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
 
             lock (_lock)
             {
@@ -259,9 +269,9 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
         /// </summary>
-        public int CountSince(DateTime from)
+        public override int CountSince(DateTimeOffset from)
         {
-            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+            long f = from.UtcTicks;
 
             lock (_lock)
             {
@@ -281,9 +291,9 @@ namespace TemporalCollections.Collections
         /// In case of a tie (equal distance before/after), the later item (>= time) is returned.
         /// Complexity: O(log n).
         /// </summary>
-        public TemporalItem<T>? GetNearest(DateTime time)
+        public override TemporalItem<T>? GetNearest(DateTimeOffset time)
         {
-            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long target = time.UtcTicks;
 
             lock (_lock)
             {
