@@ -115,7 +115,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void RemoveOlderThan(DateTime cutoff)
         {
-            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+            long c = cutoff.UtcTicks;
 
             lock (_lock)
             {
