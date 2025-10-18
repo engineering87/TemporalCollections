@@ -115,19 +115,10 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                if (_items.Count < 2) return TimeSpan.Zero;
+                int n = _items.Count;
+                if (n < 2) return TimeSpan.Zero;
 
-                var min = _items[0].Timestamp;
-                var max = min;
-
-                for (int i = 1; i < _items.Count; i++)
-                {
-                    var ts = _items[i].Timestamp;
-                    if (ts < min) min = ts;
-                    if (ts > max) max = ts;
-                }
-
-                var span = max - min;
+                var span = _items[^1].Timestamp - _items[0].Timestamp;
                 return span < TimeSpan.Zero ? TimeSpan.Zero : span;
             }
         }
