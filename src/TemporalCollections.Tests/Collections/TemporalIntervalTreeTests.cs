@@ -608,33 +608,33 @@ namespace TemporalCollections.Tests.Collections
         }
 
         [Fact]
-        public void CountSince_ShouldBeInclusive_AndConsistentWithGetInRange()
+        public void CountSince_ShouldBeInclusive_AndConsistentWithStartBasedView()
         {
             var tree = new TemporalIntervalTree<string>();
             var t0 = DateTime.UtcNow;
 
-            // 3 intervals with growing starts; small sleeps to ensure distinct timestamps
             var s1 = t0; var e1 = s1.AddMinutes(2); tree.Insert(s1, e1, "A");
             Thread.Sleep(5);
             var s2 = t0.AddMinutes(1); var e2 = s2.AddMinutes(2); tree.Insert(s2, e2, "B");
             Thread.Sleep(5);
             var s3 = t0.AddMinutes(2); var e3 = s3.AddMinutes(2); tree.Insert(s3, e3, "C");
 
-            // Order by Start (Timestamp == Start in GetInRange)
+            // Materializza tutti gli elementi e ordina per Start (Timestamp == Start nel TemporalItem)
             var all = tree.GetInRange(DateTime.MinValue, DateTime.MaxValue)
                           .OrderBy(i => i.Timestamp)
                           .ToList();
             Assert.Equal(3, all.Count);
 
-            // Inclusive cutoff at the 2nd item's start → expect items at index 1 and onward
+            // Cutoff incluso = Start del 2° elemento → ci aspettiamo 2 (indici 1 e 2)
             var cutoff = all[1].Timestamp.UtcDateTime;
 
             var countSince = tree.CountSince(cutoff);
-            Assert.Equal(all.Count, countSince);
+            Assert.Equal(all.Count - 1, countSince); // 2
 
-            // Cross-check with inclusive GetInRange
-            var cross = tree.GetInRange(cutoff, DateTime.UtcNow.AddHours(1)).Count();
-            Assert.Equal(cross, countSince);
+            // Cross-check: ricava un conteggio Start-based dal feed "tutto" (indipendente dalla semantica overlap dell'override)
+            var cross = tree.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                            .Count(i => i.Timestamp.UtcDateTime >= cutoff);
+            Assert.Equal(cross, countSince); // 2 == 2
         }
 
         [Fact]

@@ -273,7 +273,7 @@ namespace TemporalCollections.Collections
             var s = since;
             lock (_lock)
             {
-                return CountWithEndAtOrAfter(_root, s);
+                return CountByStartGte(_root, s);
             }
         }
 
@@ -670,6 +670,30 @@ namespace TemporalCollections.Collections
                 }
             }
             return res;
+        }
+
+        /// <summary>
+        /// Counts nodes whose Start is greater than or equal to <paramref name="k"/>.
+        /// This leverages the BST ordering by Start. Without subtree sizes,
+        /// the complexity is O(h + visited), which is acceptable for a treap
+        /// and keeps the implementation simple.
+        /// </summary>
+        /// <param name="node">Current subtree root.</param>
+        /// <param name="k">Start cutoff (inclusive).</param>
+        /// <returns>Count of nodes with Start >= <paramref name="k"/>.</returns>
+        private static int CountByStartGte(Node? node, DateTimeOffset k)
+        {
+            if (node is null) return 0;
+
+            if (node.Start < k)
+            {
+                // All nodes in the left subtree have Start < node.Start < k → skip them.
+                return CountByStartGte(node.Right, k);
+            }
+
+            // node.Start >= k → count this node and continue on both sides.
+            // (Without subtree sizes we must explore the right subtree.)
+            return 1 + CountByStartGte(node.Left, k) + CountByStartGte(node.Right, k);
         }
 
         #endregion
