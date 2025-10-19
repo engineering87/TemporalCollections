@@ -277,5 +277,125 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal(30, nearCeil!.Value);  // C
             }
         }
+
+        [Fact]
+        public void IsEmpty_ReflectsStateCorrectly()
+        {
+            var set = new TemporalSet<string>();
+            Assert.True(set.IsEmpty);
+
+            set.Add("A");
+            Assert.False(set.IsEmpty);
+
+            set.Remove("A");
+            Assert.True(set.IsEmpty);
+        }
+
+        [Fact]
+        public void Add_Duplicate_MustNotUpdateTimestamp()
+        {
+            var set = new TemporalSet<string>();
+            Assert.True(set.Add("A"));
+
+            var first = set.GetItems().Single(i => i.Value == "A");
+            var firstTs = first.Timestamp;
+
+            // Re-add duplicate
+            Assert.False(set.Add("A"));
+
+            var again = set.GetItems().Single(i => i.Value == "A");
+            Assert.Equal(firstTs, again.Timestamp); // timestamp unchanged
+        }
+
+        [Fact]
+        public void GetInRange_DateTimeOverload_SwapsBounds_WhenFromAfterTo()
+        {
+            var (set, tA, _, _, tD) = CreateSetABCD();
+
+            // deliberately inverted bounds (to < from)
+            var items = set.GetInRange(tD.UtcDateTime, tA.UtcDateTime).Select(i => i.Value).ToArray();
+
+            Assert.Equal(new[] { "A", "B", "C", "D" }, items);
+        }
+
+        [Fact]
+        public void CountInRange_DateTimeOverload_SwapsBounds()
+        {
+            var (set, tA, _, _, tD) = CreateSetABCD();
+
+            int c1 = set.CountInRange(tA.UtcDateTime, tD.UtcDateTime);
+            int c2 = set.CountInRange(tD.UtcDateTime, tA.UtcDateTime); // inverted
+
+            Assert.Equal(4, c1);
+            Assert.Equal(c1, c2);
+        }
+
+        [Fact]
+        public void RemoveRange_DateTimeOverload_SwapsBounds()
+        {
+            var (set, _, tB, tC, _) = CreateSetABCD();
+
+            // Inverted bounds: should still remove B and C
+            set.RemoveRange(tC.UtcDateTime, tB.UtcDateTime);
+
+            Assert.Equal(2, set.Count);
+            Assert.True(set.Contains("A"));
+            Assert.True(set.Contains("D"));
+            Assert.False(set.Contains("B"));
+            Assert.False(set.Contains("C"));
+        }
+
+        [Fact]
+        public void RemoveOlderThan_IsStrictlyExclusive_EqualTimestampIsKept()
+        {
+            var (set, tA, _, _, _) = CreateSetABCD();
+
+            set.RemoveOlderThan(tA.UtcDateTime); // strictly older than A → none removed
+
+            Assert.Equal(4, set.Count);
+            Assert.True(set.Contains("A"));
+        }
+
+        [Fact]
+        public void GetTimeSpan_EmptyOrSingleItem_ReturnsZero()
+        {
+            var empty = new TemporalSet<int>();
+            Assert.Equal(TimeSpan.Zero, empty.GetTimeSpan());
+
+            var single = new TemporalSet<string>();
+            single.Add("A");
+            Assert.Equal(TimeSpan.Zero, single.GetTimeSpan());
+        }
+
+        [Fact]
+        public void GetNearest_Empty_ReturnsNull()
+        {
+            var set = new TemporalSet<int>();
+            Assert.Null(set.GetNearest(DateTime.UtcNow));
+        }
+
+        [Fact]
+        public void Constructor_WithComparer_EnforcesEqualityRules()
+        {
+            var set = new TemporalSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            Assert.True(set.Add("alpha"));
+            Assert.False(set.Add("ALPHA")); // same item under comparer
+            Assert.Equal(1, set.Count);
+            Assert.True(set.Contains("ALPHA"));
+        }
+
+        [Fact]
+        public void Clear_IsIdempotent()
+        {
+            var (set, _, _, _, _) = CreateSetABCD();
+
+            set.Clear();
+            set.Clear(); // second clear should be no-op
+
+            Assert.True(set.IsEmpty);
+            Assert.Equal(0, set.Count);
+            Assert.Empty(set.GetItems());
+        }
     }
 }

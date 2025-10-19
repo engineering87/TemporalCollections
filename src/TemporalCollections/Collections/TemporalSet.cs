@@ -14,7 +14,17 @@ namespace TemporalCollections.Collections
     /// <typeparam name="T">Type of items stored in the set; must be non-nullable.</typeparam>
     public class TemporalSet<T> : TimeQueryableBase<T> where T : notnull
     {
-        private readonly ConcurrentDictionary<T, TemporalItem<T>> _dict = new();
+        private readonly ConcurrentDictionary<T, TemporalItem<T>> _dict;
+
+        /// <summary>
+        /// Creates a new temporal set. An optional equality comparer can be supplied to
+        /// customize item equality (e.g., case-insensitive strings).
+        /// </summary>
+        /// <param name="comparer">Equality comparer for items; defaults to <see cref="EqualityComparer{T}.Default"/>.</param>
+        public TemporalSet(IEqualityComparer<T>? comparer = null)
+        {
+            _dict = new ConcurrentDictionary<T, TemporalItem<T>>(comparer ?? EqualityComparer<T>.Default);
+        }
 
         /// <summary>
         /// Adds an item to the set with the current timestamp if not already present.
@@ -81,16 +91,21 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override TimeSpan GetTimeSpan()
         {
-            if (_dict.IsEmpty) return TimeSpan.Zero;
+            var snapshot = _dict.Values;
+            using var e = snapshot.GetEnumerator();
+            if (!e.MoveNext()) return TimeSpan.Zero;
 
-            var snapshot = _dict.Values.ToList();
-            if (snapshot.Count < 2) return TimeSpan.Zero;
+            long min = e.Current.Timestamp.UtcTicks;
+            long max = min;
 
-            long minTicks = snapshot.Min(i => i.Timestamp.UtcTicks);
-            long maxTicks = snapshot.Max(i => i.Timestamp.UtcTicks);
+            while (e.MoveNext())
+            {
+                long x = e.Current.Timestamp.UtcTicks;
+                if (x < min) min = x;
+                else if (x > max) max = x;
+            }
 
-            long delta = maxTicks - minTicks;
-
+            long delta = max - min;
             return delta > 0 ? TimeSpan.FromTicks(delta) : TimeSpan.Zero;
         }
 
@@ -244,5 +259,12 @@ namespace TemporalCollections.Collections
         /// Returns the number of items currently in the set.
         /// </summary>
         public int Count => _dict.Count;
+
+        /// <summary>
+        /// Indicates whether the set is currently empty.
+        /// This check is O(1) and thread-safe, as it relies on the underlying
+        /// <see cref="ConcurrentDictionary{TKey, TValue}.IsEmpty"/> property.
+        /// </summary>
+        public bool IsEmpty => _dict.IsEmpty;
     }
 }
