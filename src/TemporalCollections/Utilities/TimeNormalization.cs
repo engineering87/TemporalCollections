@@ -112,8 +112,10 @@ namespace TemporalCollections.Utilities
         {
             var f = ToUtcOffset(from, fromName, unspecifiedPolicy);
             var t = ToUtcOffset(to, toName, unspecifiedPolicy);
+
             if (f > t)
-                throw new ArgumentException($"'{fromName}' must be <= '{toName}' (in UTC).");
+                (f, t) = (t, f);
+
             return (f, t);
         }
 
