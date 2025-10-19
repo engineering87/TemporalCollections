@@ -102,11 +102,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
-            if (queryStart > queryEnd) throw new ArgumentException("'queryStart' must be <= 'queryEnd'.");
-
             var qs = queryStart;
             var qe = queryEnd;
-            if (qs > qe) (qs, qe) = (qe, qs);
+            if (qs > qe) 
+                (qs, qe) = (qe, qs);
 
             lock (_lock)
             {
@@ -134,12 +133,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IList<T> Query(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
-            if (queryStart > queryEnd)
-                throw new ArgumentException("'queryStart' must be <= 'queryEnd'.");
-
             var qs = queryStart;
             var qe = queryEnd;
-            if (qs > qe) (qs, qe) = (qe, qs);
+            if (qs > qe)
+                (qs, qe) = (qe, qs);
 
             lock (_lock)
             {
@@ -175,7 +172,8 @@ namespace TemporalCollections.Collections
         {
             var f = from;
             var t = to;
-            if (f > t) (f, t) = (t, f);
+            if (f > t)
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -190,7 +188,8 @@ namespace TemporalCollections.Collections
         {
             var f = from;
             var t = to;
-            if (f > t) (f, t) = (t, f);
+            if (f > t)
+                (f, t) = (t, f);
 
             lock (_lock)
             {

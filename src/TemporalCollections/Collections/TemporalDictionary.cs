@@ -43,11 +43,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             var f = from.UtcTicks;
             var t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             if (!_dict.TryGetValue(key, out var list)) yield break;
 
@@ -109,10 +108,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
@@ -176,10 +174,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             var count = 0;
             foreach (var kvp in _dict)
@@ -209,10 +206,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t)
+                (f, t) = (t, f);
 
             foreach (var kvp in _dict)
             {

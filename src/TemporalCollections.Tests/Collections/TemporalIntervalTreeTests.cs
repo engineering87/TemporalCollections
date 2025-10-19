@@ -82,14 +82,15 @@ namespace TemporalCollections.Tests.Collections
         }
 
         [Fact]
-        public void Query_Throws_WhenQueryEndEarlierThanQueryStart()
+        public void Query_DoesNotThrow_WhenQueryEndEarlierThanQueryStart()
         {
             var tree = new TemporalIntervalTree<int>();
             var start = DateTime.UtcNow;
             var end = start.AddMinutes(-1);
 
-            var ex = Assert.Throws<ArgumentException>(() => tree.Query(start, end));
-            Assert.Contains("must be <=", ex.Message);
+            var exception = Record.Exception(() => tree.Query(start, end));
+
+            Assert.Null(exception);
         }
 
         [Fact]

@@ -94,10 +94,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override IEnumerable<TemporalItem<TValue>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -160,10 +159,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -190,10 +188,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {

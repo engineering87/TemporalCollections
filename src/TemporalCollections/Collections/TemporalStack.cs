@@ -71,8 +71,6 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks;
             long t = to.UtcTicks;
 
@@ -160,8 +158,6 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks;
             long t = to.UtcTicks;
 
