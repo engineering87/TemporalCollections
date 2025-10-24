@@ -42,7 +42,7 @@ namespace TemporalCollections.Collections
             /// <summary>
             /// Treap priority (min-heap): lower value means higher priority.
             /// </summary>
-            public int Priority;
+            public readonly int Priority;
 
             public Node? Left;
             public Node? Right;
@@ -332,8 +332,8 @@ namespace TemporalCollections.Collections
         private static void Update(Node n)
         {
             var max = n.End;
-            if (n.Left is not null && n.Left.MaxEnd > max) max = n.Left.MaxEnd;
-            if (n.Right is not null && n.Right.MaxEnd > max) max = n.Right.MaxEnd;
+            if (n.Left is { } l && l.MaxEnd > max) max = l.MaxEnd;
+            if (n.Right is { } r && r.MaxEnd > max) max = r.MaxEnd;
             n.MaxEnd = max;
         }
 
