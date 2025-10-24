@@ -42,7 +42,15 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                if (_items.Count == 0) return [];
+                int n = _items.Count;
+                if (n == 0) return [];
+
+                long first = _items[0].Timestamp.UtcTicks;
+                long last = _items[n - 1].Timestamp.UtcTicks;
+
+                // Fast path: the requested range covers the entire list
+                if (f <= first && t >= last)
+                    return _items.ToList();
 
                 int start = FindFirstIndexAtOrAfterUtcTicks(f);
                 if (start >= _items.Count) return [];
