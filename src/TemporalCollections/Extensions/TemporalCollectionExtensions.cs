@@ -58,7 +58,7 @@ namespace TemporalCollections.Extensions
 
         /// <summary>
         /// Materializes all values into a Dictionary using a key selector.
-        /// Later duplicates override earlier ones.
+        /// When duplicate keys occur, the value from the latest item (by timestamp) overwrites earlier ones.
         /// </summary>
         public static Dictionary<TKey, T> ToValueDictionary<T, TKey>(
             this ITimeQueryable<T> source,

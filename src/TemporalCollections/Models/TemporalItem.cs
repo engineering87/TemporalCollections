@@ -9,6 +9,7 @@ namespace TemporalCollections.Models
     /// - Timestamps are guaranteed to be strictly increasing monotonic *per closed generic type*,
     ///   even under high concurrency or same-tick creations.
     /// - UTC is used to avoid time zone / DST ambiguity at the API boundary.
+    /// </summary>
     /// <typeparam name="T">Wrapped value type.</typeparam>
     public record TemporalItem<T>(T Value, DateTimeOffset Timestamp)
     {
