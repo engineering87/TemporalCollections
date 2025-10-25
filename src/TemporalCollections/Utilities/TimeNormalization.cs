@@ -102,9 +102,6 @@ namespace TemporalCollections.Utilities
         /// <summary>
         /// Normalizes a [from, to] range to UTC and validates that from &lt;= to.
         /// </summary>
-        /// <exception cref="ArgumentException">
-        /// Thrown when from &gt; to after normalization.
-        /// </exception>
         public static (DateTimeOffset fromUtc, DateTimeOffset toUtc) NormalizeRange(
             DateTime from, DateTime to,
             string fromName = "from", string toName = "to",

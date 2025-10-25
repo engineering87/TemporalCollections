@@ -148,10 +148,9 @@ namespace TemporalCollections.Collections
         /// </summary>
         public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            if (from > to) throw new ArgumentException("'from' must be <= 'to'.");
-
             long f = from.UtcTicks, t = to.UtcTicks;
-            if (f > t) (f, t) = (t, f);
+            if (f > t) 
+                (f, t) = (t, f);
 
             foreach (var kvp in _dict)
             {
