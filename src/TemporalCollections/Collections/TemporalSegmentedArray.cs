@@ -16,7 +16,7 @@ namespace TemporalCollections.Collections
     /// • Range queries O(log S + K) where S = number of segments and K = returned items.
     /// • Efficient retention: <see cref="RemoveOlderThan(System.DateTimeOffset)"/> can drop whole segments.
     /// </summary>
-    public sealed class TemporalSegmentedArray<T> : TimeQueryableBase<T>
+    public class TemporalSegmentedArray<T> : TimeQueryableBase<T>
     {
         /// <summary>
         /// Internal segment of contiguous, timestamp-ordered items.

@@ -11,7 +11,7 @@ namespace TemporalCollections.Tests.Collections
     /// increasing UTC ticks per closed T. Tests therefore derive ranges and cutoffs
     /// from the actual produced timestamps instead of fabricating DateTimeOffset values.
     /// </summary>
-    public sealed class TemporalSegmentedArray_AutonomousTimestamp_Tests
+    public class TemporalSegmentedArray_AutonomousTimestamp_Tests
     {
         // ---------- Helpers ----------
 
