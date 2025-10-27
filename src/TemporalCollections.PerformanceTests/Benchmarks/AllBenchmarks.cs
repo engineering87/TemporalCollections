@@ -17,6 +17,8 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             BenchmarkRunner.Run<TemporalStackBenchmarks>();
             BenchmarkRunner.Run<TemporalSlidingWindowSetBenchmarks>();
             BenchmarkRunner.Run<TemporalCircularBufferBenchmarks>();
+            BenchmarkRunner.Run<TemporalSegmentedArrayBenchmarks>();
+            BenchmarkRunner.Run<TemporalMultimapBenchmarks>();
         }
     }
 }
