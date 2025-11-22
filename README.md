@@ -50,30 +50,34 @@ At the heart of all collections lies the `TemporalItem<T>` struct:
 - Provides a timestamp comparer for sorting and searching
 
 ## Available Collections
-| Collection Name             | Description                                                                                          | Thread Safety | Ordering            | Key Features                                           |
-|-----------------------------|--------------------------------------------------------------------------------------------------|---------------|---------------------|-------------------------------------------------------|
-| TemporalQueue<T>            | Thread-safe FIFO queue with timestamped items. Supports enqueue, dequeue, peek, time-range query.| Yes           | FIFO (timestamp)    | Efficient time-range retrieval, remove old items.     |
-| TemporalStack<T>            | Thread-safe LIFO stack with timestamped items. Allows push, pop, peek, and time-based cleanup.   | Yes           | LIFO (timestamp)    | Time-range queries, O(n) removal of old elements.     |
-| TemporalSet<T>              | Thread-safe set of unique items timestamped at insertion. Supports add, contains, remove, queries.| Yes          | Unordered           | Unique items, time-range query, remove old items.     |
-| TemporalSlidingWindowSet<T> | Thread-safe set retaining only items within a sliding time window. Automatically cleans expired items.| Yes        | Unordered           | Sliding window expiration, efficient removal.         |
-| TemporalSortedList<T>       | Thread-safe sorted list of timestamped items. Maintains chronological order, supports binary search.| Yes         | Sorted by timestamp | Efficient range queries, sorted order guaranteed.     |
-| TemporalPriorityQueue<T>    | Thread-safe priority queue with timestamped items. Supports priority-based dequeueing and queries.| Yes           | Priority order      | Priority-based ordering with time queries.             |
-| TemporalIntervalTree<T>     | Thread-safe interval tree for timestamped intervals. Efficient overlap queries and interval removals.| Yes         | Interval-based      | Efficient interval overlap queries and removals.       |
-| TemporalDictionary<TKey, TValue> | Thread-safe dictionary where each key maps to a timestamped value. Supports add/update, remove, and time queries.| Yes | Unordered           | Key-based access with timestamp tracking and queries. |
-| TemporalCircularBuffer<T>   | Thread-safe fixed-size circular buffer with timestamped items. Overwrites oldest items on overflow.| Yes           | FIFO (circular)     | Fixed size, efficient overwriting and time queries.    |
+| Collection Name                  | Description                                                                                               | Thread Safety | Ordering                    | Key Features                                                         |
+|----------------------------------|-----------------------------------------------------------------------------------------------------------|---------------|-----------------------------|-----------------------------------------------------------------------|
+| TemporalQueue<T>                 | Thread-safe FIFO queue with timestamped items. Supports enqueue, dequeue, peek, time-range query.       | Yes           | FIFO (timestamp)            | Efficient time-range retrieval, remove old items.                     |
+| TemporalStack<T>                 | Thread-safe LIFO stack with timestamped items. Allows push, pop, peek, and time-based cleanup.          | Yes           | LIFO (timestamp)            | Time-range queries, O(n) removal of old elements.                     |
+| TemporalSet<T>                   | Thread-safe set of unique items timestamped at insertion. Supports add, contains, remove, queries.      | Yes           | Unordered                   | Unique items, time-range query, remove old items.                     |
+| TemporalSlidingWindowSet<T>      | Thread-safe set retaining only items within a sliding time window. Automatically cleans expired items.  | Yes           | Unordered                   | Sliding window expiration, efficient removal.                         |
+| TemporalSortedList<T>            | Thread-safe sorted list of timestamped items. Maintains chronological order, supports binary search.    | Yes           | Sorted by timestamp         | Efficient range queries, sorted order guaranteed.                     |
+| TemporalSegmentedArray<T>        | Thread-safe time-ordered segmented array optimized for append-in-order workloads and retention.         | Yes           | Sorted by timestamp (global) | Amortized O(1) append in-order, segment-based range queries and cleanup. |
+| TemporalPriorityQueue<T>         | Thread-safe priority queue with timestamped items. Supports priority-based dequeueing and queries.      | Yes           | Priority order              | Priority-based ordering with time queries.                            |
+| TemporalIntervalTree<T>          | Thread-safe interval tree for timestamped intervals. Efficient overlap queries and interval removals.   | Yes           | Interval-based              | Efficient interval overlap queries and removals.                      |
+| TemporalDictionary<TKey, TValue> | Thread-safe dictionary where each key maps to a timestamped value. Supports add/update, remove, queries.| Yes           | Unordered                   | Key-based access with timestamp tracking and queries.                 |
+| TemporalMultimap<TKey, TValue>   | Thread-safe multimap where each key maps to multiple timestamped values with global time-based queries. | Yes           | Per-key chronological       | Multiple values per key, per-key range queries and global time view.  |
+| TemporalCircularBuffer<T>        | Thread-safe fixed-size circular buffer with timestamped items. Overwrites oldest items on overflow.     | Yes           | FIFO (circular)             | Fixed size, efficient overwriting and time queries.                   |
 
 ## Usage Guidance
-| Collection Name             | When to Use                                                                                         | When Not to Use                                            |
-|-----------------------------|--------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-| TemporalQueue<T>            | When you need a thread-safe FIFO queue with time-based retrieval and cleanup.                     | If you need priority ordering or random access.            |
-| TemporalStack<T>            | When you want a thread-safe LIFO stack with timestamp tracking and time-range queries.           | If you require fast arbitrary removal or sorting by timestamp. |
-| TemporalSet<T>              | When you need unique timestamped items with efficient membership checks and time-based removal.  | If you require ordering of elements or priority queues.     |
-| TemporalSlidingWindowSet<T> | When you want to automatically retain only recent items within a fixed time window.              | If your window size is highly variable or if you need sorted access. |
-| TemporalSortedList<T>       | When you need a sorted collection by timestamp with efficient range queries.                      | If insertions are very frequent and performance is critical (due to list shifting). |
-| TemporalPriorityQueue<T>    | When priority-based ordering with timestamp tracking is required for dequeueing.                 | If you only need FIFO or LIFO semantics without priorities. |
-| TemporalIntervalTree<T>     | When you need efficient interval overlap queries and interval-based time operations.             | If your data are single points rather than intervals.       |
-| TemporalDictionary<TKey, TValue> | When key-based access combined with timestamp tracking and querying is needed.              | If ordering or range queries by timestamp are required.     |
-| TemporalCircularBuffer<T>   | When you want a fixed-size buffer that overwrites oldest items with timestamp tracking.          | If you need unbounded storage or complex queries.           |
+| Collection Name                  | When to Use                                                                                                       | When Not to Use                                                                                  |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+| TemporalQueue<T>                 | When you need a thread-safe FIFO queue with time-based retrieval and cleanup.                                     | If you need priority ordering or random access.                                                  |
+| TemporalStack<T>                 | When you want a thread-safe LIFO stack with timestamp tracking and time-range queries.                            | If you require fast arbitrary removal or sorting by timestamp.                                   |
+| TemporalSet<T>                   | When you need unique timestamped items with efficient membership checks and time-based removal.                  | If you require ordering of elements or priority queues.                                          |
+| TemporalSlidingWindowSet<T>      | When you want to automatically retain only recent items within a fixed time window.                               | If your window size is highly variable or if you need sorted access.                            |
+| TemporalSortedList<T>            | When you need a sorted collection by timestamp with efficient range queries.                                      | If insertions are very frequent and performance is critical (due to list shifting).             |
+| TemporalSegmentedArray<T>        | When you ingest events in (mostly) non-decreasing timestamp order and need fast range queries and retention.      | If you frequently insert heavily out-of-order, need random removals in the middle, or key lookups. |
+| TemporalPriorityQueue<T>         | When priority-based ordering with timestamp tracking is required for dequeueing.                                   | If you only need FIFO or LIFO semantics without priorities.                                     |
+| TemporalIntervalTree<T>          | When you need efficient interval overlap queries and interval-based time operations.                               | If your data are single points rather than intervals.                                           |
+| TemporalDictionary<TKey, TValue> | When key-based access combined with timestamp tracking and querying is needed.                                     | If ordering or range queries by timestamp are required.                                         |
+| TemporalMultimap<TKey, TValue>   | When each key can have multiple timestamped values and you need per-key queries and/or a global time-ordered view.| If you store a single value per key (use TemporalDictionary) or need ordering by non-time fields.|
+| TemporalCircularBuffer<T>        | When you want a fixed-size buffer that overwrites oldest items with timestamp tracking.                            | If you need unbounded storage or complex queries.                                               |
 
 ## ITimeQueryable<T> Interface
 
@@ -427,16 +431,18 @@ These benchmarks help compare trade-offs between different collections and guide
 
 All collections are thread-safe. Locking granularity and common operations (amortized):
 
-| Collection | Locking | Add/Push | Range Query | RemoveOlderThan |
-|---|---|---:|---:|---:|
-| TemporalQueue | single lock around a queue snapshot | O(1) | O(n) | O(k) from head |
-| TemporalStack | single lock; drain & rebuild for window ops | O(1) | O(n) | O(n) |
-| TemporalSet | lock-free dict + per-bucket ops | O(1) avg | O(n) | O(n) |
-| TemporalSortedList | single lock; binary search for ranges | O(n) insert | **O(log n + m)** | O(k) |
-| TemporalPriorityQueue | single lock; `SortedSet` by (priority,timestamp) | O(log n) | O(n) | O(n) |
-| TemporalIntervalTree | single lock; interval overlap pruning | O(log n) avg | **O(log n + m)** | O(n) |
-| TemporalDictionary | concurrent dict + per-list lock | O(1) avg | O(n) | O(n) |
-| TemporalCircularBuffer | single lock; ring overwrite | O(1) | O(n) | O(n) |
+| Collection              | Locking                                   | Add/Push                               | Range Query          | RemoveOlderThan              |
+|-------------------------|--------------------------------------------|-----------------------------------------|-----------------------|-------------------------------|
+| TemporalQueue           | single lock around a queue snapshot        | O(1)                                    | O(n)                  | O(k) from head               |
+| TemporalStack           | single lock; drain & rebuild for window ops| O(1)                                    | O(n)                  | O(n)                         |
+| TemporalSet             | lock-free dict + per-bucket ops            | O(1) avg                                | O(n)                  | O(n)                         |
+| TemporalSortedList      | single lock; binary search for ranges      | O(n) insert                             | **O(log n + m)**      | O(k)                         |
+| TemporalSegmentedArray  | single lock; segmented storage             | O(1) amortized (in-order append)        | **O(log n + m)**      | O(n)                         |
+| TemporalPriorityQueue   | single lock; SortedSet by (priority,time)  | O(log n)                                | O(n)                  | O(n)                         |
+| TemporalIntervalTree    | single lock; interval overlap pruning      | O(log n) avg                            | **O(log n + m)**      | O(n)                         |
+| TemporalDictionary      | concurrent dict + per-list lock            | O(1) avg                                | O(n)                  | O(n)                         |
+| TemporalMultimap        | single lock; per-key ordered lists         | O(1) avg                                | O(n + m log m)        | O(n)                         |
+| TemporalCircularBuffer  | single lock; ring overwrite                | O(1)                                    | O(n)                  | O(n)                         |
 
 `n` = items, `m` = matches, `k` = removed.
 
