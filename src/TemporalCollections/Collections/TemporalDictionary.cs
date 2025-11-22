@@ -3,7 +3,6 @@
 using System.Collections.Concurrent;
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
-using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
@@ -15,13 +14,10 @@ namespace TemporalCollections.Collections
     /// </summary>
     /// <typeparam name="TKey">The type of keys in the dictionary (not nullable).</typeparam>
     /// <typeparam name="TValue">The type of values stored with timestamps.</typeparam>
-    public class TemporalDictionary<TKey, TValue> : ITimeQueryable<KeyValuePair<TKey, TValue>>
+    public class TemporalDictionary<TKey, TValue> : TimeQueryableBase<KeyValuePair<TKey, TValue>>
         where TKey : notnull
     {
         private readonly ConcurrentDictionary<TKey, List<TemporalItem<TValue>>> _dict = new();
-
-        // Centralized policy for DateTimeKind.Unspecified handling.
-        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
         private static readonly IComparer<TemporalItem<TValue>> TimestampOnlyComparer
             = new TimestampOnlyComparerImpl();
@@ -45,9 +41,13 @@ namespace TemporalCollections.Collections
         /// Retrieves all temporal items associated with the specified <paramref name="key"/> whose timestamps
         /// fall within the inclusive range from <paramref name="from"/> to <paramref name="to"/>.
         /// </summary>
-        public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTime from, DateTime to)
+        public IEnumerable<TemporalItem<TValue>> GetInRange(TKey key, DateTimeOffset from, DateTimeOffset to)
         {
-            var (f, t) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
+            var f = from.UtcTicks;
+            var t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
+
             if (!_dict.TryGetValue(key, out var list)) yield break;
 
             List<TemporalItem<TValue>> snapshot;
@@ -55,26 +55,26 @@ namespace TemporalCollections.Collections
             {
                 if (list.Count == 0) yield break;
 
-                int lo = LowerBound(list, f.UtcTicks);
-                int hi = UpperBound(list, t.UtcTicks) - 1;
+                int lo = LowerBound(list, f);
+                int hi = UpperBound(list, t) - 1;
                 if (lo > hi) yield break;
 
                 int count = hi - lo + 1;
                 snapshot = new List<TemporalItem<TValue>>(count);
-                for (int i = lo; i <= hi; i++) 
+                for (int i = lo; i <= hi; i++)
                     snapshot.Add(list[i]);
             }
 
-            foreach (var item in snapshot) 
+            foreach (var item in snapshot)
                 yield return item;
         }
 
         /// <summary>
         /// Removes all timestamped values older than the specified cutoff date from all keys.
         /// </summary>
-        public void RemoveOlderThan(DateTime cutoff)
+        public override void RemoveOlderThan(DateTimeOffset cutoff)
         {
-            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+            long c = cutoff.UtcTicks;
 
             foreach (var kvp in _dict)
             {
@@ -106,10 +106,11 @@ namespace TemporalCollections.Collections
         /// Each item returned is wrapped as a <see cref="TemporalItem{T}"/> containing
         /// a <see cref="KeyValuePair{TKey, TValue}"/> with the original key and value.
         /// </summary>
-        public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTime from, DateTime to)
+        public override IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
 
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
@@ -141,7 +142,7 @@ namespace TemporalCollections.Collections
         /// Returns the time span between the earliest and the latest timestamp across all stored items.
         /// Returns <see cref="TimeSpan.Zero"/> if the dictionary is empty.
         /// </summary>
-        public TimeSpan GetTimeSpan()
+        public override TimeSpan GetTimeSpan()
         {
             bool any = false;
             DateTimeOffset min = DateTimeOffset.MaxValue;
@@ -171,10 +172,11 @@ namespace TemporalCollections.Collections
         /// Counts how many items across all keys have a timestamp within the inclusive range
         /// from <paramref name="from"/> to <paramref name="to"/>.
         /// </summary>
-        public int CountInRange(DateTime from, DateTime to)
+        public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
 
             var count = 0;
             foreach (var kvp in _dict)
@@ -195,17 +197,18 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all keys and all their timestamped values from the dictionary.
         /// </summary>
-        public void Clear() => _dict.Clear();
+        public override void Clear() => _dict.Clear();
 
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range
         /// from <paramref name="from"/> to <paramref name="to"/> across all keys.
         /// Keys left with no items are removed as well.
         /// </summary>
-        public void RemoveRange(DateTime from, DateTime to)
+        public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t)
+                (f, t) = (t, f);
 
             foreach (var kvp in _dict)
             {
@@ -227,7 +230,7 @@ namespace TemporalCollections.Collections
         /// Returns the latest (most recent) item across all keys, or <c>null</c> if empty.
         /// The returned item contains the original key/value as a <see cref="KeyValuePair{TKey,TValue}"/>.
         /// </summary>
-        public TemporalItem<KeyValuePair<TKey, TValue>>? GetLatest()
+        public override TemporalItem<KeyValuePair<TKey, TValue>>? GetLatest()
         {
             DateTimeOffset bestTs = DateTimeOffset.MinValue;
             TKey? bestKey = default!;
@@ -254,7 +257,7 @@ namespace TemporalCollections.Collections
 
             return found
                 ? new TemporalItem<KeyValuePair<TKey, TValue>>(
-                    new KeyValuePair<TKey, TValue>(bestKey, bestVal),
+                    new KeyValuePair<TKey, TValue>(bestKey!, bestVal!),
                     bestTs)
                 : null;
         }
@@ -263,7 +266,7 @@ namespace TemporalCollections.Collections
         /// Returns the earliest (oldest) item across all keys, or <c>null</c> if empty.
         /// The returned item contains the original key/value as a <see cref="KeyValuePair{TKey,TValue}"/>.
         /// </summary>
-        public TemporalItem<KeyValuePair<TKey, TValue>>? GetEarliest()
+        public override TemporalItem<KeyValuePair<TKey, TValue>>? GetEarliest()
         {
             DateTimeOffset bestTs = DateTimeOffset.MaxValue;
             TKey? bestKey = default!;
@@ -290,7 +293,7 @@ namespace TemporalCollections.Collections
 
             return found
                 ? new TemporalItem<KeyValuePair<TKey, TValue>>(
-                    new KeyValuePair<TKey, TValue>(bestKey, bestVal),
+                    new KeyValuePair<TKey, TValue>(bestKey!, bestVal!),
                     bestTs)
                 : null;
         }
@@ -299,9 +302,9 @@ namespace TemporalCollections.Collections
         /// Retrieves all items strictly before the specified <paramref name="time"/> across all keys.
         /// The returned items wrap the original key/value.
         /// </summary>
-        public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetBefore(DateTime time)
+        public override IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetBefore(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
             foreach (var kvp in _dict)
@@ -329,9 +332,9 @@ namespace TemporalCollections.Collections
         /// Retrieves all items strictly after the specified <paramref name="time"/> across all keys.
         /// The returned items wrap the original key/value.
         /// </summary>
-        public IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetAfter(DateTime time)
+        public override IEnumerable<TemporalItem<KeyValuePair<TKey, TValue>>> GetAfter(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
             var results = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
 
             foreach (var kvp in _dict)
@@ -358,9 +361,9 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Counts how many items across all keys have timestamp greater than or equal to the specified cutoff.
         /// </summary>
-        public int CountSince(DateTime from)
+        public override int CountSince(DateTimeOffset from)
         {
-            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+            long f = from.UtcTicks;
             int count = 0;
 
             foreach (var kvp in _dict)
@@ -385,9 +388,9 @@ namespace TemporalCollections.Collections
         /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
         /// Complexity: O(K log N_k) where K is the number of keys and N_k is the items per key.
         /// </summary>
-        public TemporalItem<KeyValuePair<TKey, TValue>>? GetNearest(DateTime time)
+        public override TemporalItem<KeyValuePair<TKey, TValue>>? GetNearest(DateTimeOffset time)
         {
-            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long target = time.UtcTicks;
 
             TemporalItem<KeyValuePair<TKey, TValue>>? best = null;
             long bestDiff = long.MaxValue;

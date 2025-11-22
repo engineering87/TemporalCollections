@@ -114,5 +114,26 @@ namespace TemporalCollections.Tests.Collections
             Assert.True(asCollection!.IsReadOnly);
             Assert.Throws<NotSupportedException>(() => asCollection.Add(42));
         }
+
+        [Fact]
+        public void BucketBy_GroupsIntoSingleDailyBucket_AndAppliesAggregator()
+        {
+            var source = MakeIntQueue(1, 2, 3, 4);
+
+            var earliest = source.GetEarliest();
+            Assert.NotNull(earliest);
+            var dayStartUtc = new DateTimeOffset(earliest!.Timestamp.UtcDateTime.Date, TimeSpan.Zero);
+
+            var buckets = source
+                .BucketBy<int, int>(
+                    interval: TimeSpan.FromDays(1),
+                    aggregator: items => items.Sum(i => i.Value)
+                )
+                .ToList();
+
+            Assert.Single(buckets);
+            Assert.Equal(dayStartUtc, buckets[0].BucketStart);
+            Assert.Equal(1 + 2 + 3 + 4, buckets[0].Result);
+        }
     }
 }

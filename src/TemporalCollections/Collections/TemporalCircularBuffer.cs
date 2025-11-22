@@ -2,7 +2,6 @@
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Abstractions;
 using TemporalCollections.Models;
-using TemporalCollections.Utilities;
 
 namespace TemporalCollections.Collections
 {
@@ -12,15 +11,12 @@ namespace TemporalCollections.Collections
     /// Public API uses DateTime; internal comparisons use DateTimeOffset (UTC).
     /// </summary>
     /// <typeparam name="T">Type of items stored in the buffer.</typeparam>
-    public class TemporalCircularBuffer<T> : ITimeQueryable<T>
+    public class TemporalCircularBuffer<T> : TimeQueryableBase<T>
     {
         private readonly Lock _lock = new();
         private readonly TemporalItem<T>[] _buffer;
         private int _head;
         private int _count;
-
-        // Centralized policy for DateTimeKind.Unspecified handling.
-        private const UnspecifiedPolicy DefaultPolicy = UnspecifiedPolicy.AssumeUtc;
 
         /// <summary>Gets the fixed capacity of the circular buffer.</summary>
         public int Capacity { get; }
@@ -87,10 +83,11 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns all temporal items whose timestamps fall within the specified time range, inclusive.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetInRange(DateTime from, DateTime to)
+        public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -113,9 +110,9 @@ namespace TemporalCollections.Collections
         /// Removes all items with timestamps older than the specified cutoff time.
         /// Retains only items with timestamps >= cutoff.
         /// </summary>
-        public void RemoveOlderThan(DateTime cutoff)
+        public override void RemoveOlderThan(DateTimeOffset cutoff)
         {
-            long c = TimeNormalization.UtcTicks(cutoff, DefaultPolicy);
+            long c = cutoff.UtcTicks;
 
             lock (_lock)
             {
@@ -137,7 +134,7 @@ namespace TemporalCollections.Collections
         /// computed as (latest.Timestamp - earliest.Timestamp).
         /// Returns TimeSpan.Zero if there are fewer than two items.
         /// </summary>
-        public TimeSpan GetTimeSpan()
+        public override TimeSpan GetTimeSpan()
         {
             lock (_lock)
             {
@@ -154,10 +151,11 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the number of items with timestamps in the inclusive range [from, to].
         /// </summary>
-        public int CountInRange(DateTime from, DateTime to)
+        public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -176,7 +174,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all items from the buffer.
         /// </summary>
-        public void Clear()
+        public override void Clear()
         {
             lock (_lock)
             {
@@ -189,10 +187,11 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Removes all items whose timestamps fall within the inclusive range [from, to].
         /// </summary>
-        public void RemoveRange(DateTime from, DateTime to)
+        public override void RemoveRange(DateTimeOffset from, DateTimeOffset to)
         {
-            var (fromUtc, toUtc) = TimeNormalization.NormalizeRange(from, to, nameof(from), nameof(to), DefaultPolicy);
-            long f = fromUtc.UtcTicks, t = toUtc.UtcTicks;
+            long f = from.UtcTicks, t = to.UtcTicks;
+            if (f > t) 
+                (f, t) = (t, f);
 
             lock (_lock)
             {
@@ -213,7 +212,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Retrieves the latest (most recent) item, or null if the buffer is empty.
         /// </summary>
-        public TemporalItem<T>? GetLatest()
+        public override TemporalItem<T>? GetLatest()
         {
             lock (_lock)
             {
@@ -226,7 +225,7 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Retrieves the earliest (oldest) item, or null if the buffer is empty.
         /// </summary>
-        public TemporalItem<T>? GetEarliest()
+        public override TemporalItem<T>? GetEarliest()
         {
             lock (_lock)
             {
@@ -240,9 +239,9 @@ namespace TemporalCollections.Collections
         /// Retrieves all items with timestamp strictly before <paramref name="time"/>.
         /// The returned items are ordered from oldest to newest.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetBefore(DateTime time)
+        public override IEnumerable<TemporalItem<T>> GetBefore(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
 
             lock (_lock)
             {
@@ -262,9 +261,9 @@ namespace TemporalCollections.Collections
         /// Retrieves all items with timestamp strictly after <paramref name="time"/>.
         /// The returned items are ordered from oldest to newest.
         /// </summary>
-        public IEnumerable<TemporalItem<T>> GetAfter(DateTime time)
+        public override IEnumerable<TemporalItem<T>> GetAfter(DateTimeOffset time)
         {
-            long cutoff = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long cutoff = time.UtcTicks;
 
             lock (_lock)
             {
@@ -283,9 +282,9 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Counts the number of items with timestamp greater than or equal to the specified cutoff.
         /// </summary>
-        public int CountSince(DateTime from)
+        public override int CountSince(DateTimeOffset from)
         {
-            long f = TimeNormalization.UtcTicks(from, DefaultPolicy);
+            long f = from.UtcTicks;
 
             lock (_lock)
             {
@@ -307,9 +306,9 @@ namespace TemporalCollections.Collections
         /// In case of a tie (same distance before/after), the later item (timestamp ≥ time) is returned.
         /// Complexity: O(n) snapshot + O(log n) search.
         /// </summary>
-        public TemporalItem<T>? GetNearest(DateTime time)
+        public override TemporalItem<T>? GetNearest(DateTimeOffset time)
         {
-            long target = TimeNormalization.UtcTicks(time, DefaultPolicy);
+            long target = time.UtcTicks;
 
             lock (_lock)
             {

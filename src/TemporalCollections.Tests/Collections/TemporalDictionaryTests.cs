@@ -67,24 +67,28 @@ namespace TemporalCollections.Tests.Collections
 
             dict.Add("key1", 1);
             Thread.Sleep(10);
-            var cutoff = DateTime.UtcNow;
+            var cutoff = DateTime.UtcNow;           // ok: verrà convertito in DateTimeOffset (UTC)
             Thread.Sleep(10);
             dict.Add("key1", 2);
             dict.Add("key2", 3);
 
-            dict.RemoveOlderThan(cutoff);
+            dict.RemoveOlderThan(cutoff);           // ok
 
             // Older item for key1 removed, but key1 still exists due to newer item
-            var key1Items = dict.GetInRange("key1", DateTime.MinValue, DateTime.MaxValue).ToList();
+            var key1Items = dict
+                .GetInRange("key1", DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+                .ToList();
             Assert.DoesNotContain(key1Items, i => i.Value == 1);
             Assert.Contains(key1Items, i => i.Value == 2);
 
             // key2 should remain untouched
-            var key2Items = dict.GetInRange("key2", DateTime.MinValue, DateTime.MaxValue).ToList();
+            var key2Items = dict
+                .GetInRange("key2", DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+                .ToList();
             Assert.Contains(key2Items, i => i.Value == 3);
 
             // Now remove all items older than future date to remove everything
-            dict.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1));
+            dict.RemoveOlderThan(DateTime.UtcNow.AddMinutes(1)); // ok
             Assert.Empty(dict.Keys);
             Assert.Equal(0, dict.Count);
         }
@@ -93,7 +97,7 @@ namespace TemporalCollections.Tests.Collections
         public void GetInRange_ByKey_ReturnsEmptyForUnknownKey()
         {
             var dict = new TemporalDictionary<string, int>();
-            var result = dict.GetInRange("missing", DateTime.MinValue, DateTime.MaxValue);
+            var result = dict.GetInRange("missing", DateTimeOffset.MinValue, DateTimeOffset.MaxValue);
             Assert.Empty(result);
         }
 
@@ -284,13 +288,17 @@ namespace TemporalCollections.Tests.Collections
 
             dict.Add("k", 1);
             Thread.Sleep(2);
-            var cutoff = DateTime.UtcNow;
+            var cutoff = DateTime.UtcNow; // ok: UTC → conversione sicura a DateTimeOffset
             Thread.Sleep(2);
             dict.Add("k", 2);
 
             dict.RemoveOlderThan(cutoff);
 
-            var items = dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue).Select(i => i.Value).ToList();
+            var items = dict
+                .GetInRange("k", DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+                .Select(i => i.Value)
+                .ToList();
+
             Assert.DoesNotContain(1, items); // strictly older should be gone
             Assert.Contains(2, items);       // equal or newer remains
         }
@@ -306,7 +314,7 @@ namespace TemporalCollections.Tests.Collections
 
             Assert.Empty(dict.Keys);
             Assert.Equal(0, dict.Count);
-            Assert.Empty(dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue));
+            Assert.Empty(dict.GetInRange("k", DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
         }
 
         [Fact]
@@ -397,10 +405,12 @@ namespace TemporalCollections.Tests.Collections
             });
 
             // Sanity: total items equals GetInRange count
-            var allCount = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+            var allCount = dict.GetInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).Count();
             // With the current API, Count is the number of keys; allCount is number of items
             Assert.True(allCount >= dict.Count);
-            Assert.All(dict.Keys, k => Assert.NotEmpty(dict.GetInRange(k, DateTime.MinValue, DateTime.MaxValue)));
+            Assert.All(keys, k =>
+                Assert.NotEmpty(dict.GetInRange(k, DateTimeOffset.MinValue, DateTimeOffset.MaxValue))
+            );
         }
 
         [Fact]
@@ -432,7 +442,10 @@ namespace TemporalCollections.Tests.Collections
             // Add quickly (no sleeps) to stress same-tick behavior
             for (int i = 0; i < 50; i++) dict.Add("k", i);
 
-            var items = dict.GetInRange("k", DateTime.MinValue, DateTime.MaxValue).OrderBy(i => i.Timestamp).ToList();
+            var items = dict
+                .GetInRange("k", DateTimeOffset.MinValue, DateTimeOffset.MaxValue)
+                .OrderBy(i => i.Timestamp)
+                .ToList();
 
             for (int i = 1; i < items.Count; i++)
                 Assert.True(items[i - 1].Timestamp < items[i].Timestamp, $"Non-monotonic timestamp at {i}");
