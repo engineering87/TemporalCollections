@@ -29,11 +29,19 @@ namespace TemporalCollections.Collections
         {
             var temporalItem = TemporalItem<TValue>.Create(value);
             var list = _dict.GetOrAdd(key, _ => []);
+
             lock (list)
             {
-                int idx = list.BinarySearch(temporalItem, TimestampOnlyComparer);
-                if (idx < 0) idx = ~idx;
-                list.Insert(idx, temporalItem);
+                // Because timestamps are strictly increasing across all TemporalItem<TValue>
+                // instances created via TemporalItem<T>.Create, and we never insert items
+                // with arbitrary timestamps, we know that:
+                //
+                //   - For each key, the sequence of timestamps in "list" is strictly increasing.
+                //   - The new "temporalItem" always has the largest (most recent) timestamp.
+                //
+                // Therefore, we can safely append to the end of the list while preserving
+                // the sorted-by-timestamp invariant. No BinarySearch + Insert is needed.
+                list.Add(temporalItem);
             }
         }
 
