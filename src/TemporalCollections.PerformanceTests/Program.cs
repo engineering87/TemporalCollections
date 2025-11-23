@@ -37,6 +37,8 @@ class Program
             typeof(TemporalStackBenchmarks),
             typeof(TemporalSlidingWindowSetBenchmarks),
             typeof(TemporalCircularBufferBenchmarks),
+            typeof(TemporalMultimapBenchmarks),
+            typeof(TemporalSegmentedArrayBenchmarks),
         };
 
         var allSummaries = new List<Summary>();
