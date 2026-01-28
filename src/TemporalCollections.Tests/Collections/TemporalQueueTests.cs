@@ -563,5 +563,271 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal("C", nearCeil!.Value);
             }
         }
+
+        [Fact]
+        public void GetInRange_WhenBoundsAreReversed_ShouldStillWork()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.True(all.Count >= 3);
+
+            // Pick a middle window using actual timestamps (deterministic)
+            var from = all[2].Timestamp.UtcDateTime; // newer
+            var to = all[1].Timestamp.UtcDateTime;   // older (reversed)
+
+            var res = q.GetInRange(from, to).Select(x => x.Value).ToList();
+
+            // Bounds are swapped internally -> should include items 2..3? Actually window [ts2, ts3]
+            Assert.Contains(2, res);
+            Assert.Contains(3, res);
+            Assert.DoesNotContain(1, res);
+        }
+
+        [Fact]
+        public void CountInRange_WhenBoundsAreReversed_ShouldMatchGetInRange()
+        {
+            var q = new TemporalQueue<int>();
+            for (int i = 0; i < 10; i++) q.Enqueue(i);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var a = all[7].Timestamp.UtcDateTime;
+            var b = all[3].Timestamp.UtcDateTime;
+
+            var expected = q.GetInRange(a, b).Count(); // reversed
+            var counted = q.CountInRange(a, b);
+
+            Assert.Equal(expected, counted);
+        }
+
+        [Fact]
+        public void CountSince_ShouldReturnZero_WhenCutoffAfterLatest()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+
+            var latest = q.GetLatest()!;
+            var cutoff = latest.Timestamp.UtcDateTime.AddTicks(1);
+
+            Assert.Equal(0, q.CountSince(cutoff));
+        }
+
+        [Fact]
+        public void CountSince_ShouldReturnAll_WhenCutoffBeforeEarliest()
+        {
+            var q = new TemporalQueue<int>();
+            for (int i = 0; i < 5; i++) q.Enqueue(i);
+
+            var earliest = q.GetEarliest()!;
+            var cutoff = earliest.Timestamp.UtcDateTime.AddTicks(-1);
+
+            Assert.Equal(q.Count, q.CountSince(cutoff));
+        }
+
+        [Fact]
+        public void GetNearest_EmptyQueue_ShouldReturnNull()
+        {
+            var q = new TemporalQueue<int>();
+            Assert.Null(q.GetNearest(DateTime.UtcNow));
+        }
+
+        [Fact]
+        public void GetNearest_BeforeAll_ShouldReturnEarliest()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+
+            var earliest = q.GetEarliest()!;
+            var target = earliest.Timestamp.UtcDateTime.AddTicks(-10);
+
+            var nearest = q.GetNearest(target);
+            Assert.NotNull(nearest);
+            Assert.Equal(earliest.Value, nearest!.Value);
+        }
+
+        [Fact]
+        public void GetNearest_AfterAll_ShouldReturnLatest()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+
+            var latest = q.GetLatest()!;
+            var target = latest.Timestamp.UtcDateTime.AddTicks(10);
+
+            var nearest = q.GetNearest(target);
+            Assert.NotNull(nearest);
+            Assert.Equal(latest.Value, nearest!.Value);
+        }
+
+        [Fact]
+        public void GetNearest_Tie_ShouldPreferLaterItem()
+        {
+            var q = new TemporalQueue<string>();
+            q.Enqueue("A");
+            q.Enqueue("B");
+            q.Enqueue("C");
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.True(all.Count >= 3);
+
+            var b = all[1];
+            var c = all[2];
+
+            // Choose a target exactly midway between B and C (only if even delta)
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0);
+
+            if ((dt % 2) != 0)
+            {
+                // If odd, shift to the closer boundary by constructing two near-mid points
+                var midFloor = new DateTimeOffset(b.Timestamp.UtcTicks + (dt / 2), TimeSpan.Zero).UtcDateTime;
+                var midCeil = new DateTimeOffset(b.Timestamp.UtcTicks + (dt / 2) + 1, TimeSpan.Zero).UtcDateTime;
+
+                Assert.Equal("B", q.GetNearest(midFloor)!.Value);
+                Assert.Equal("C", q.GetNearest(midCeil)!.Value);
+            }
+            else
+            {
+                var mid = new DateTimeOffset(b.Timestamp.UtcTicks + (dt / 2), TimeSpan.Zero).UtcDateTime;
+
+                // Tie-break rule: prefer later (>= time) => should be C
+                var nearest = q.GetNearest(mid);
+                Assert.NotNull(nearest);
+                Assert.Equal("C", nearest!.Value);
+            }
+        }
+
+        [Fact]
+        public void RemoveOlderThan_WhenCutoffBeforeEarliest_ShouldBeNoOp()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+
+            var earliest = q.GetEarliest()!;
+            var cutoff = earliest.Timestamp.UtcDateTime.AddTicks(-1);
+
+            q.RemoveOlderThan(cutoff);
+
+            Assert.Equal(3, q.Count);
+            Assert.Equal(1, q.Peek().Value);
+        }
+
+        [Fact]
+        public void RemoveOlderThan_WhenCutoffAfterLatest_ShouldClearQueue()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+
+            var latest = q.GetLatest()!;
+            var cutoff = latest.Timestamp.UtcDateTime.AddTicks(1);
+
+            q.RemoveOlderThan(cutoff);
+
+            Assert.Equal(0, q.Count);
+            Assert.Empty(q.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+        }
+
+        [Fact]
+        public void RemoveRange_WhenBoundsAreReversed_ShouldStillRemove()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+            q.Enqueue(4);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all[1].Timestamp.UtcDateTime;
+            var t3 = all[2].Timestamp.UtcDateTime;
+
+            // reversed input [t3, t2] -> internally swapped -> should remove 2 and 3
+            q.RemoveRange(t3, t2);
+
+            var remaining = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.DoesNotContain(2, remaining);
+            Assert.DoesNotContain(3, remaining);
+            Assert.Contains(1, remaining);
+            Assert.Contains(4, remaining);
+        }
+
+        [Fact]
+        public void GetEarliest_ShouldRemainFront_AfterRemoveRange()
+        {
+            var q = new TemporalQueue<int>();
+            q.Enqueue(1);
+            q.Enqueue(2);
+            q.Enqueue(3);
+            q.Enqueue(4);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all[1].Timestamp.UtcDateTime;
+            var t3 = all[2].Timestamp.UtcDateTime;
+
+            q.RemoveRange(t2, t3); // remove 2 and 3
+
+            var earliest = q.GetEarliest()!;
+            Assert.Equal(1, earliest.Value);
+
+            var firstDeq = q.Dequeue();
+            Assert.Equal(1, firstDeq.Value);
+        }
+
+        [Fact]
+        public void SnapshotSemantics_GetInRange_ShouldNotChangeDuringConcurrentEnqueue()
+        {
+            var q = new TemporalQueue<int>();
+
+            // Seed
+            for (int i = 0; i < 100; i++) q.Enqueue(i);
+
+            // Take a snapshot while we enqueue concurrently
+            var t = Task.Run(() =>
+            {
+                for (int i = 100; i < 500; i++) q.Enqueue(i);
+            });
+
+            var snapshot = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            t.GetAwaiter().GetResult();
+
+            // Snapshot must be internally consistent: timestamps non-decreasing and count <= final count
+            Assert.True(snapshot.Count <= q.Count);
+
+            for (int i = 1; i < snapshot.Count; i++)
+                Assert.True(snapshot[i - 1].Timestamp <= snapshot[i].Timestamp);
+        }
+
+        [Fact]
+        public void TemporalItem_Create_ShouldBeStrictlyMonotonic_UnderHighConcurrency()
+        {
+            // This test targets TemporalItem<T>.Create invariants indirectly via queue enqueue.
+            var q = new TemporalQueue<int>();
+
+            Parallel.For(0, 10_000, i => q.Enqueue(i));
+
+            var items = q.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                         .OrderBy(x => x.Timestamp.UtcTicks)
+                         .ToList();
+
+            Assert.Equal(10_000, items.Count);
+
+            for (int i = 1; i < items.Count; i++)
+            {
+                Assert.True(items[i - 1].Timestamp.UtcTicks < items[i].Timestamp.UtcTicks,
+                    $"Non-monotonic ticks at index {i}");
+            }
+        }
     }
 }
