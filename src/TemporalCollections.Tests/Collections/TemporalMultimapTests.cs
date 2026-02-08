@@ -1,5 +1,6 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
+using System.Globalization;
 using TemporalCollections.Collections;
 using TemporalCollections.Models;
 
@@ -299,6 +300,244 @@ namespace TemporalCollections.Tests.Collections
             var all = map.GetInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
             for (int i = 1; i < all.Length; i++)
                 Assert.True(all[i - 1].Timestamp.UtcTicks <= all[i].Timestamp.UtcTicks);
+        }
+
+        [Fact(DisplayName = "Empty collection: queries return empty / counts 0 / nearest null")]
+        public void Empty_Behavior_IsConsistent()
+        {
+            var map = new TemporalMultimap<string, int>();
+
+            Assert.Equal(0, map.Count);
+            Assert.Equal(0, map.KeyCount);
+
+            Assert.Empty(map.GetInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+            Assert.Empty(map.GetBefore(DateTimeOffset.UtcNow));
+            Assert.Empty(map.GetAfter(DateTimeOffset.UtcNow));
+            Assert.Equal(0, map.CountInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+            Assert.Equal(0, map.CountSince(DateTimeOffset.UtcNow.AddDays(-1)));
+            Assert.Null(map.GetNearest(DateTimeOffset.UtcNow));
+            Assert.Null(map.GetLatest());
+            Assert.Null(map.GetEarliest());
+            Assert.Equal(TimeSpan.Zero, map.GetTimeSpan());
+        }
+
+        [Fact(DisplayName = "GetValuesInRange is inclusive on boundaries (from/to)")]
+        public void PerKey_GetValuesInRange_InclusiveBoundaries()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var items = AddValuesForKey(map, "A", 10, 20, 30);
+
+            var exactFirst = map.GetValuesInRange("A", items[0].Timestamp, items[0].Timestamp).ToArray();
+            Assert.Single(exactFirst);
+            Assert.Equal(10, exactFirst[0].Value);
+
+            var exactLast = map.GetValuesInRange("A", items[2].Timestamp, items[2].Timestamp).ToArray();
+            Assert.Single(exactLast);
+            Assert.Equal(30, exactLast[0].Value);
+
+            var middle = map.GetValuesInRange("A", items[1].Timestamp, items[1].Timestamp).ToArray();
+            Assert.Single(middle);
+            Assert.Equal(20, middle[0].Value);
+        }
+
+        [Fact(DisplayName = "Range arguments can be swapped: GetInRange/RemoveRange/CountInRange behave same")]
+        public void RangeArguments_Swapped_AreHandled()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var a = AddValuesForKey(map, "A", 1, 2, 3, 4, 5);
+
+            // Same results even if from > to
+            var r1 = map.GetInRange(a[1].Timestamp, a[3].Timestamp).Select(x => x.Value.Value).ToArray();
+            var r2 = map.GetInRange(a[3].Timestamp, a[1].Timestamp).Select(x => x.Value.Value).ToArray();
+            Assert.Equal(r1, r2);
+
+            var c1 = map.CountInRange(a[1].Timestamp, a[3].Timestamp);
+            var c2 = map.CountInRange(a[3].Timestamp, a[1].Timestamp);
+            Assert.Equal(c1, c2);
+
+            // RemoveRange swapped should remove the same number of items (inclusive)
+            var map2 = new TemporalMultimap<string, int>();
+            var b = AddValuesForKey(map2, "A", 1, 2, 3, 4, 5);
+            map2.RemoveRange(b[3].Timestamp, b[1].Timestamp); // swapped
+            var left = map2.GetValuesInRange("A", DateTimeOffset.MinValue, DateTimeOffset.MaxValue).Select(x => x.Value).ToArray();
+            Assert.Equal(new[] { 1, 5 }, left);
+        }
+
+        [Fact(DisplayName = "Per-key RemoveOlderThan is strictly older: cutoff timestamp remains")]
+        public void RemoveOlderThan_StrictlyOlder_CutoffStays()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var items = AddValuesForKey(map, "A", 10, 20, 30);
+
+            // cutoff = timestamp of 20, must remove only 10
+            int removed = map.RemoveOlderThan("A", items[1].Timestamp);
+            Assert.Equal(1, removed);
+
+            var left = map.GetValuesInRange("A", DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
+            Assert.Equal(new[] { 20, 30 }, left.Select(x => x.Value).ToArray());
+        }
+
+        [Fact(DisplayName = "Global RemoveOlderThan is strictly older: cutoff timestamp remains (across keys)")]
+        public void Global_RemoveOlderThan_StrictlyOlder_CutoffStays()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var a = AddValuesForKey(map, "A", 1, 2, 3);
+            var b = AddValuesForKey(map, "B", 10, 20);
+
+            // cutoff = A:2 timestamp => remove only A:1 (strictly older)
+            map.RemoveOlderThan(a[1].Timestamp);
+
+            var all = map.GetInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
+            Assert.DoesNotContain(all, it => it.Value.Key == "A" && it.Value.Value == 1);
+            Assert.Contains(all, it => it.Value.Key == "A" && it.Value.Value == 2);
+            Assert.Contains(all, it => it.Value.Key == "B" && it.Value.Value == 10);
+        }
+
+        [Fact(DisplayName = "CountForKey/ContainsKey reflect key removal after last item deleted")]
+        public void KeyBookkeeping_AfterDeletions_IsCorrect()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var a = AddValuesForKey(map, "A", 1, 2, 3);
+
+            Assert.True(map.ContainsKey("A"));
+            Assert.Equal(3, map.CountForKey("A"));
+            Assert.Equal(1, map.KeyCount);
+
+            // Remove all via per-key range
+            int removed = map.RemoveRange("A", a[0].Timestamp, a[2].Timestamp);
+            Assert.Equal(3, removed);
+
+            Assert.False(map.ContainsKey("A"));
+            Assert.Equal(0, map.CountForKey("A"));
+            Assert.Equal(0, map.KeyCount);
+            Assert.Equal(0, map.Count);
+        }
+
+        [Fact(DisplayName = "GetNearest tie across keys prefers earlier timestamp (global tie-break rule)")]
+        public void GetNearest_TieAcrossKeys_PrefersEarlier()
+        {
+            var map = new TemporalMultimap<string, int>();
+
+            // Build two items around a midpoint by crafting a manual timestamp between two AddValue calls
+            var a1 = map.AddValue("A", 100);
+            var a2 = map.AddValue("A", 200);
+
+            // Create B item exactly at midpoint between a1 and a2 (manual add)
+            var mid = Mid(a1.Timestamp, a2.Timestamp);
+            map.Add(new TemporalItem<KeyValuePair<string, int>>(new KeyValuePair<string, int>("B", 999), mid));
+
+            // Query at same midpoint: nearest should be the midpoint item itself (diff=0)
+            var nearest = map.GetNearest(mid);
+            Assert.NotNull(nearest);
+            Assert.Equal("B", nearest!.Value.Key);
+            Assert.Equal(999, nearest.Value.Value);
+
+            // Now query at a time equidistant between a1 and mid:
+            // nearest should be the earlier one on tie (a1 vs mid if symmetric)
+            var mid2 = Mid(a1.Timestamp, mid);
+            nearest = map.GetNearest(mid2);
+            Assert.NotNull(nearest);
+
+            // Tie scenario depends on integer tick division; enforce the intended rule:
+            // if equal diff, implementation prefers earlier timestamp.
+            // So nearest must NOT have timestamp greater than the other candidate with same diff.
+            // We validate by checking it is one of the two and that it is the earlier if diffs match.
+            var cand1 = map.GetInRange(a1.Timestamp, a1.Timestamp).Single(); // A:100
+            var cand2 = map.GetInRange(mid, mid).Single();                   // B:999
+
+            long d1 = Math.Abs(cand1.Timestamp.UtcTicks - mid2.UtcTicks);
+            long d2 = Math.Abs(cand2.Timestamp.UtcTicks - mid2.UtcTicks);
+
+            if (d1 == d2)
+                Assert.Equal(cand1.Timestamp.UtcTicks, nearest.Timestamp.UtcTicks); // earlier wins
+            else
+                Assert.Equal(d1 < d2 ? cand1.Timestamp.UtcTicks : cand2.Timestamp.UtcTicks, nearest.Timestamp.UtcTicks);
+        }
+
+        [Fact(DisplayName = "DateTime overloads: Unspecified is treated as UTC (AssumeUtc policy)")]
+        public void DateTimeOverloads_Unspecified_AssumeUtc()
+        {
+            var map = new TemporalMultimap<string, int>();
+            var items = AddValuesForKey(map, "A", 1, 2, 3);
+
+            // Use DateTime overloads with Kind=Unspecified but same ticks as UTC DateTime
+            DateTime fromUnspec = DateTime.SpecifyKind(items[0].Timestamp.UtcDateTime, DateTimeKind.Unspecified);
+            DateTime toUnspec = DateTime.SpecifyKind(items[2].Timestamp.UtcDateTime, DateTimeKind.Unspecified);
+
+            var res = map.GetInRange(fromUnspec, toUnspec).ToArray();
+            Assert.Equal(3, res.Length);
+
+            // RemoveOlderThan via DateTime overload: cutoff stays (strictly older)
+            DateTime cutoffUnspec = DateTime.SpecifyKind(items[1].Timestamp.UtcDateTime, DateTimeKind.Unspecified);
+            map.RemoveOlderThan(cutoffUnspec);
+
+            var left = map.GetValuesInRange("A", DateTimeOffset.MinValue, DateTimeOffset.MaxValue).Select(x => x.Value).ToArray();
+            Assert.Equal(new[] { 2, 3 }, left);
+        }
+
+        [Fact(DisplayName = "Global ordering: GetInRange returns results globally sorted even with many keys")]
+        public void Global_GetInRange_IsGloballySorted_ManyKeys()
+        {
+            var map = new TemporalMultimap<string, int>();
+            for (int k = 0; k < 20; k++)
+            {
+                string key = "K" + k.ToString(CultureInfo.InvariantCulture);
+                for (int i = 0; i < 15; i++)
+                    map.AddValue(key, i);
+            }
+
+            var all = map.GetInRange(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
+            Assert.Equal(20 * 15, all.Length);
+
+            for (int i = 1; i < all.Length; i++)
+                Assert.True(all[i - 1].Timestamp.UtcTicks <= all[i].Timestamp.UtcTicks);
+        }
+
+        [Fact(DisplayName = "AddRange(items): supports mixed keys and preserves order within each key")]
+        public void AddRange_Items_MixedKeys_PreservesPerKeyOrder()
+        {
+            var map = new TemporalMultimap<string, int>();
+
+            // Create a bunch of items with explicit timestamps (some interleaving)
+            var baseTicks = DateTimeOffset.UtcNow.UtcTicks;
+            var items = new[]
+            {
+                new TemporalItem<KeyValuePair<string,int>>(new("A", 1), new DateTimeOffset(baseTicks + 10, TimeSpan.Zero)),
+                new TemporalItem<KeyValuePair<string,int>>(new("B", 1), new DateTimeOffset(baseTicks + 11, TimeSpan.Zero)),
+                new TemporalItem<KeyValuePair<string,int>>(new("A", 2), new DateTimeOffset(baseTicks + 12, TimeSpan.Zero)),
+                // Out of order within A to force binary insert
+                new TemporalItem<KeyValuePair<string,int>>(new("A", 99), new DateTimeOffset(baseTicks + 9, TimeSpan.Zero)),
+                new TemporalItem<KeyValuePair<string,int>>(new("B", 2), new DateTimeOffset(baseTicks + 13, TimeSpan.Zero)),
+            };
+
+            map.AddRange(items);
+
+            var a = map.GetValuesInRange("A", DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
+            AssertStrictlyIncreasing(a);
+            Assert.Equal(new[] { 99, 1, 2 }, a.Select(x => x.Value).ToArray());
+
+            var b = map.GetValuesInRange("B", DateTimeOffset.MinValue, DateTimeOffset.MaxValue).ToArray();
+            AssertStrictlyIncreasing(b);
+            Assert.Equal(new[] { 1, 2 }, b.Select(x => x.Value).ToArray());
+        }
+
+        [Fact(DisplayName = "GetTimeSpan: single item returns zero, multiple items returns (max-min) across keys")]
+        public void GetTimeSpan_SingleAndMulti()
+        {
+            var map = new TemporalMultimap<string, int>();
+            map.AddValue("A", 1);
+            Assert.Equal(TimeSpan.Zero, map.GetTimeSpan());
+
+            var a2 = map.AddValue("A", 2);
+            var b1 = map.AddValue("B", 10);
+
+            var earliest = map.GetEarliest()!;
+            var latest = map.GetLatest()!;
+            Assert.Equal(latest.Timestamp - earliest.Timestamp, map.GetTimeSpan());
+
+            // sanity: latest should be >= both
+            Assert.True(latest.Timestamp.UtcTicks >= a2.Timestamp.UtcTicks);
+            Assert.True(latest.Timestamp.UtcTicks >= b1.Timestamp.UtcTicks);
         }
     }
 }
