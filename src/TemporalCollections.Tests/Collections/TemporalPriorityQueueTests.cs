@@ -1,6 +1,7 @@
 ﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using TemporalCollections.Collections;
+using TemporalCollections.Models;
 
 namespace TemporalCollections.Tests.Collections
 {
@@ -358,6 +359,246 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal("B", nearFloor!.Value);
                 Assert.Equal("C", nearCeil!.Value);
             }
+        }
+
+        // --- Helpers (local to this test class) ---
+        private static void AssertSortedByTimestamp<T>(IReadOnlyList<TemporalItem<T>> items)
+        {
+            for (int i = 1; i < items.Count; i++)
+            {
+                Assert.True(items[i - 1].Timestamp.UtcTicks <= items[i].Timestamp.UtcTicks,
+                    $"Not sorted by timestamp at {i - 1}->{i}: {items[i - 1].Timestamp:o} > {items[i].Timestamp:o}");
+            }
+        }
+
+        private static DateTimeOffset Mid(DateTimeOffset a, DateTimeOffset b)
+        {
+            long m = (a.UtcTicks + b.UtcTicks) / 2;
+            return new DateTimeOffset(m, TimeSpan.Zero);
+        }
+
+        [Fact(DisplayName = "Empty queue: TryPeek/TryDequeue return false and default/null value")]
+        public void EmptyQueue_TryPeek_TryDequeue_ReturnFalse()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+
+            Assert.False(q.TryPeek(out var p));
+            Assert.Null(p);
+
+            Assert.False(q.TryDequeue(out var d));
+            Assert.Null(d);
+
+            Assert.Equal(0, q.Count);
+            Assert.Empty(q.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Null(q.GetEarliest());
+            Assert.Null(q.GetLatest());
+            Assert.Equal(TimeSpan.Zero, q.GetTimeSpan());
+        }
+
+        [Fact(DisplayName = "Dequeue: stable ordering for same priority (FIFO by insertion timestamp)")]
+        public void TryDequeue_SamePriority_IsStableByInsertionTime()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+
+            // Same priority for all: should be dequeued by insertion timestamp (stable FIFO).
+            q.Enqueue("A", 5);
+            q.Enqueue("B", 5);
+            q.Enqueue("C", 5);
+
+            Assert.True(q.TryDequeue(out var v1));
+            Assert.True(q.TryDequeue(out var v2));
+            Assert.True(q.TryDequeue(out var v3));
+
+            Assert.Equal("A", v1);
+            Assert.Equal("B", v2);
+            Assert.Equal("C", v3);
+            Assert.Equal(0, q.Count);
+        }
+
+        [Fact(DisplayName = "Time queries are ordered by timestamp (not by priority)")]
+        public void GetInRange_IsOrderedByTimestamp_NotByPriority()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+
+            // Enqueue with priorities that would reorder if we were sorting by priority:
+            // but GetInRange must return ordered by timestamp.
+            q.Enqueue("first-lowprio", 100);  // inserted 1st
+            q.Enqueue("second-highprio", 1);  // inserted 2nd
+            q.Enqueue("third-midprio", 50);   // inserted 3rd
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.Equal(3, all.Count);
+            AssertSortedByTimestamp(all);
+
+            Assert.Equal("first-lowprio", all[0].Value);
+            Assert.Equal("second-highprio", all[1].Value);
+            Assert.Equal("third-midprio", all[2].Value);
+        }
+
+        [Fact(DisplayName = "RemoveOlderThan is strictly older: cutoff item remains")]
+        public void RemoveOlderThan_StrictlyOlder_CutoffRemains()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+
+            q.Enqueue("A", 2);
+            q.Enqueue("B", 1);
+            q.Enqueue("C", 3);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            Assert.True(all.Count >= 3);
+
+            // cutoff = timestamp of the second item => must remove only the first (strictly older)
+            var cutoff = all[1].Timestamp.UtcDateTime;
+            q.RemoveOlderThan(cutoff);
+
+            var left = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            Assert.Equal(2, left.Count);
+            Assert.Equal(all[1].Value, left[0].Value); // cutoff item remains
+            Assert.Equal(all[2].Value, left[1].Value);
+        }
+
+        [Fact(DisplayName = "RemoveRange is inclusive on boundaries [from,to]")]
+        public void RemoveRange_InclusiveBoundaries_RemovesEndpoints()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+
+            q.Enqueue("A", 3);
+            q.Enqueue("B", 2);
+            q.Enqueue("C", 1);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            Assert.True(all.Count == 3);
+
+            // Remove exactly item B by using same timestamp as start/end
+            var tsB = all[1].Timestamp.UtcDateTime;
+            q.RemoveRange(tsB, tsB);
+
+            var left = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.Equal(2, left.Count);
+            Assert.DoesNotContain("B", left);
+        }
+
+        [Fact(DisplayName = "Range arguments can be swapped: GetInRange/CountInRange/RemoveRange behave same")]
+        public void RangeArguments_Swapped_AreHandled()
+        {
+            var q1 = new TemporalPriorityQueue<int, string>();
+            q1.Enqueue("A", 3);
+            q1.Enqueue("B", 2);
+            q1.Enqueue("C", 1);
+
+            var all1 = q1.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            var from = all1[0].Timestamp.UtcDateTime;
+            var to = all1[2].Timestamp.UtcDateTime;
+
+            var r1 = q1.GetInRange(from, to).Select(x => x.Value).ToArray();
+            var r2 = q1.GetInRange(to, from).Select(x => x.Value).ToArray();
+            Assert.Equal(r1, r2);
+
+            var c1 = q1.CountInRange(from, to);
+            var c2 = q1.CountInRange(to, from);
+            Assert.Equal(c1, c2);
+
+            // RemoveRange swapped removes same items
+            var q2 = new TemporalPriorityQueue<int, string>();
+            q2.Enqueue("A", 3);
+            q2.Enqueue("B", 2);
+            q2.Enqueue("C", 1);
+
+            var all2 = q2.GetInRange(DateTime.MinValue, DateTime.MaxValue).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            var midTs = all2[1].Timestamp.UtcDateTime;
+
+            // Remove only middle item but with swapped args around same point (still inclusive)
+            q2.RemoveRange(midTs, midTs);
+            var left = q2.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.Equal(2, left.Count);
+            Assert.DoesNotContain(all2[1].Value, left);
+        }
+
+        [Fact(DisplayName = "DateTime overloads: Unspecified is treated as UTC (AssumeUtc policy from base)")]
+        public void DateTimeOverloads_Unspecified_AssumeUtc()
+        {
+            var q = new TemporalPriorityQueue<int, string>();
+            q.Enqueue("A", 3);
+            q.Enqueue("B", 2);
+            q.Enqueue("C", 1);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                       .OrderBy(x => x.Timestamp.UtcTicks)
+                       .ToList();
+
+            // Build DateTime range with Kind=Unspecified but same clock values as UTC
+            var fromUnspec = DateTime.SpecifyKind(all[0].Timestamp.UtcDateTime, DateTimeKind.Unspecified);
+            var toUnspec = DateTime.SpecifyKind(all[2].Timestamp.UtcDateTime, DateTimeKind.Unspecified);
+
+            var res = q.GetInRange(fromUnspec, toUnspec).ToList();
+            Assert.Equal(3, res.Count);
+        }
+
+        [Fact(DisplayName = "GetNearest: tie prefers later item (>= time) as documented")]
+        public void GetNearest_TiePrefersLater_WhenExactMidpointExists()
+        {
+            // Wide range for retrieving all items
+            DateTime wideFrom = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            DateTime wideTo = new(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var q = new TemporalPriorityQueue<int, string>();
+            q.Enqueue("A", 10);
+            q.Enqueue("B", 10);
+            q.Enqueue("C", 10);
+
+            var all = q.GetInRange(wideFrom, wideTo).OrderBy(x => x.Timestamp.UtcTicks).ToList();
+            Assert.True(all.Count >= 3);
+
+            var b = all[1];
+            var c = all[2];
+
+            long dt = c.Timestamp.UtcTicks - b.Timestamp.UtcTicks;
+            Assert.True(dt > 0);
+
+            if ((dt & 1L) == 0L)
+            {
+                // Exact midpoint exists -> tie case
+                var mid = Mid(b.Timestamp, c.Timestamp).UtcDateTime;
+
+                var nearest = q.GetNearest(mid);
+                Assert.NotNull(nearest);
+                Assert.Equal("C", nearest!.Value); // later preferred on tie
+            }
+            else
+            {
+                // No exact midpoint; test both sides: one tick closer to B, next tick closer to C
+                long midFloorTicks = b.Timestamp.UtcTicks + (dt / 2);
+                long midCeilTicks = midFloorTicks + 1;
+
+                var nearB = q.GetNearest(new DateTimeOffset(midFloorTicks, TimeSpan.Zero).UtcDateTime);
+                var nearC = q.GetNearest(new DateTimeOffset(midCeilTicks, TimeSpan.Zero).UtcDateTime);
+
+                Assert.NotNull(nearB);
+                Assert.NotNull(nearC);
+                Assert.Equal("B", nearB!.Value);
+                Assert.Equal("C", nearC!.Value);
+            }
+        }
+
+        [Fact(DisplayName = "Concurrency: timestamps remain strictly increasing in time queries")]
+        public void Concurrency_Enqueue_ProducesMonotonicTimestamps_InQueries()
+        {
+            var q = new TemporalPriorityQueue<int, int>();
+
+            Parallel.For(0, 2000, i =>
+            {
+                q.Enqueue(i, i % 7);
+            });
+
+            Assert.Equal(2000, q.Count);
+
+            var all = q.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.Equal(2000, all.Count);
+            AssertSortedByTimestamp(all);
+
+            // Extra safety: no duplicates dropped (SortedSet strict ordering)
+            var seen = new HashSet<int>(all.Select(x => x.Value));
+            Assert.Equal(2000, seen.Count);
         }
     }
 }
