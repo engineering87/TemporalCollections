@@ -165,23 +165,32 @@ namespace TemporalCollections.Tests.Collections
             AssertStrictlyIncreasing(all);
         }
 
-        [Fact(DisplayName = "GetNearest returns nearest by ticks; in tie it prefers the earlier item")]
-        public void GetNearest_TiePrefersEarlier()
+        [Fact(DisplayName = "GetNearest returns nearest by ticks; in tie it prefers the later item (>= time)")]
+        public void GetNearest_TiePrefersLater()
         {
             var col = new TemporalSegmentedArray<int>(segmentCapacity: 3);
             var items = AddValues(col, 100, 200, 300);
 
-            // Midpoint between items[1] and items[2] → tie, expect earlier (items[1])
+            // Midpoint between items[1] and items[2]
             var mid = Mid(items[1].Timestamp, items[2].Timestamp);
             var nearest = col.GetNearest(mid);
             Assert.NotNull(nearest);
-            Assert.Equal(200, nearest!.Value);
 
-            // Midpoint between items[0] and items[1] → earlier (items[0])
+            long dBefore = Math.Abs(mid.UtcTicks - items[1].Timestamp.UtcTicks);
+            long dAfter = Math.Abs(items[2].Timestamp.UtcTicks - mid.UtcTicks);
+            // If true tie, prefer later; otherwise prefer closer
+            int expected1 = (dAfter <= dBefore) ? 300 : 200;
+            Assert.Equal(expected1, nearest!.Value);
+
+            // Midpoint between items[0] and items[1]
             var mid2 = Mid(items[0].Timestamp, items[1].Timestamp);
             nearest = col.GetNearest(mid2);
             Assert.NotNull(nearest);
-            Assert.Equal(100, nearest!.Value);
+
+            long dBefore2 = Math.Abs(mid2.UtcTicks - items[0].Timestamp.UtcTicks);
+            long dAfter2 = Math.Abs(items[1].Timestamp.UtcTicks - mid2.UtcTicks);
+            int expected2 = (dAfter2 <= dBefore2) ? 200 : 100;
+            Assert.Equal(expected2, nearest!.Value);
         }
 
         [Fact(DisplayName = "GetLatest and GetEarliest return correct items")]

@@ -456,6 +456,7 @@ namespace TemporalCollections.Collections
                 long target = time.UtcTicks;
                 TemporalItem<KeyValuePair<TKey, TValue>>? best = null;
                 long bestDiff = long.MaxValue;
+                bool bestIsAfterOrEqual = false;
 
                 foreach (var list in _byKey.Values)
                 {
@@ -464,33 +465,40 @@ namespace TemporalCollections.Collections
                     int idx = LowerBound(list, target);
 
                     if (idx < list.Count)
-                    {
-                        var cand = list[idx];
-                        long diff = cand.Timestamp.UtcTicks - target;
-                        if (diff < 0) diff = -diff;
-                        if (diff < bestDiff ||
-                            (diff == bestDiff && cand.Timestamp.UtcTicks < (best?.Timestamp.UtcTicks ?? long.MaxValue)))
-                        {
-                            best = cand;
-                            bestDiff = diff;
-                        }
-                    }
+                        Consider(list[idx]);
 
                     if (idx > 0)
-                    {
-                        var cand = list[idx - 1];
-                        long diff = target - cand.Timestamp.UtcTicks;
-                        if (diff < 0) diff = -diff;
-                        if (diff < bestDiff ||
-                            (diff == bestDiff && cand.Timestamp.UtcTicks < (best?.Timestamp.UtcTicks ?? long.MaxValue)))
-                        {
-                            best = cand;
-                            bestDiff = diff;
-                        }
-                    }
+                        Consider(list[idx - 1]);
                 }
 
                 return best;
+
+                void Consider(TemporalItem<KeyValuePair<TKey, TValue>> cand)
+                {
+                    long ticks = cand.Timestamp.UtcTicks;
+                    long diff = ticks >= target ? (ticks - target) : (target - ticks);
+                    bool isAfterOrEqual = ticks >= target;
+
+                    if (diff < bestDiff)
+                    {
+                        bestDiff = diff;
+                        bestIsAfterOrEqual = isAfterOrEqual;
+                        best = cand;
+                    }
+                    else if (diff == bestDiff && best is not null)
+                    {
+                        // Tie-break: prefer the later item (>= target)
+                        if (isAfterOrEqual && !bestIsAfterOrEqual)
+                        {
+                            bestIsAfterOrEqual = true;
+                            best = cand;
+                        }
+                        else if (isAfterOrEqual == bestIsAfterOrEqual && ticks > best.Timestamp.UtcTicks)
+                        {
+                            best = cand;
+                        }
+                    }
+                }
             }
         }
 

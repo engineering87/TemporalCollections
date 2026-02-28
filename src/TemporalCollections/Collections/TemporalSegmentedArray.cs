@@ -145,7 +145,8 @@ namespace TemporalCollections.Collections
         /// <param name="segmentCapacity">Maximum number of items per segment; must be &gt; 0.</param>
         public TemporalSegmentedArray(int segmentCapacity = DefaultSegmentCapacity)
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(segmentCapacity);
+            if (segmentCapacity < 2)
+                throw new ArgumentOutOfRangeException(nameof(segmentCapacity), "Segment capacity must be at least 2.");
 
             _segmentCapacity = segmentCapacity;
         }
@@ -514,7 +515,8 @@ namespace TemporalCollections.Collections
                     return candBefore;
                 long dPrev = Math.Abs(x - candBefore.Timestamp.UtcTicks);
                 long dNext = Math.Abs(candAfter.Timestamp.UtcTicks - x);
-                return (dPrev <= dNext) ? candBefore : candAfter;
+                // Tie-break: prefer the later item (>= time)
+                return (dNext <= dPrev) ? candAfter : candBefore;
             }
         }
 

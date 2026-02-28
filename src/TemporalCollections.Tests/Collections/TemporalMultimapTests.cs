@@ -196,8 +196,8 @@ namespace TemporalCollections.Tests.Collections
             Assert.Equal(2, map.CountSince(b[0].Timestamp));                     // >= 40 → 40,50
         }
 
-        [Fact(DisplayName = "GetNearest picks the nearest by ticks; on tie prefers the earlier")]
-        public void Global_GetNearest_TiePrefersEarlier()
+        [Fact(DisplayName = "GetNearest picks the nearest by ticks; on tie prefers the later (>= time)")]
+        public void Global_GetNearest_TiePrefersLater()
         {
             var map = new TemporalMultimap<string, int>();
             var items = AddValuesForKey(map, "A", 100, 200, 300);
@@ -205,12 +205,21 @@ namespace TemporalCollections.Tests.Collections
             var mid = Mid(items[1].Timestamp, items[2].Timestamp); // between 200 and 300
             var nearest = map.GetNearest(mid);
             Assert.NotNull(nearest);
-            Assert.Equal(200, nearest!.Value.Value); // earlier on tie
+
+            long dBefore = Math.Abs(mid.UtcTicks - items[1].Timestamp.UtcTicks);
+            long dAfter = Math.Abs(items[2].Timestamp.UtcTicks - mid.UtcTicks);
+            // If true tie, prefer later; otherwise prefer closer
+            int expected1 = (dAfter <= dBefore) ? 300 : 200;
+            Assert.Equal(expected1, nearest!.Value.Value);
 
             var mid2 = Mid(items[0].Timestamp, items[1].Timestamp);
             nearest = map.GetNearest(mid2);
             Assert.NotNull(nearest);
-            Assert.Equal(100, nearest!.Value.Value);
+
+            long dBefore2 = Math.Abs(mid2.UtcTicks - items[0].Timestamp.UtcTicks);
+            long dAfter2 = Math.Abs(items[1].Timestamp.UtcTicks - mid2.UtcTicks);
+            int expected2 = (dAfter2 <= dBefore2) ? 200 : 100;
+            Assert.Equal(expected2, nearest!.Value.Value);
         }
 
         [Fact(DisplayName = "GetLatest/GetEarliest/ GetTimeSpan are correct")]
@@ -413,8 +422,8 @@ namespace TemporalCollections.Tests.Collections
             Assert.Equal(0, map.Count);
         }
 
-        [Fact(DisplayName = "GetNearest tie across keys prefers earlier timestamp (global tie-break rule)")]
-        public void GetNearest_TieAcrossKeys_PrefersEarlier()
+        [Fact(DisplayName = "GetNearest tie across keys prefers later timestamp (global tie-break rule)")]
+        public void GetNearest_TieAcrossKeys_PrefersLater()
         {
             var map = new TemporalMultimap<string, int>();
 
@@ -433,15 +442,13 @@ namespace TemporalCollections.Tests.Collections
             Assert.Equal(999, nearest.Value.Value);
 
             // Now query at a time equidistant between a1 and mid:
-            // nearest should be the earlier one on tie (a1 vs mid if symmetric)
+            // nearest should be the later one on tie (consistent with all other collections)
             var mid2 = Mid(a1.Timestamp, mid);
             nearest = map.GetNearest(mid2);
             Assert.NotNull(nearest);
 
             // Tie scenario depends on integer tick division; enforce the intended rule:
-            // if equal diff, implementation prefers earlier timestamp.
-            // So nearest must NOT have timestamp greater than the other candidate with same diff.
-            // We validate by checking it is one of the two and that it is the earlier if diffs match.
+            // if equal diff, implementation prefers later timestamp (>= time).
             var cand1 = map.GetInRange(a1.Timestamp, a1.Timestamp).Single(); // A:100
             var cand2 = map.GetInRange(mid, mid).Single();                   // B:999
 
@@ -449,7 +456,7 @@ namespace TemporalCollections.Tests.Collections
             long d2 = Math.Abs(cand2.Timestamp.UtcTicks - mid2.UtcTicks);
 
             if (d1 == d2)
-                Assert.Equal(cand1.Timestamp.UtcTicks, nearest.Timestamp.UtcTicks); // earlier wins
+                Assert.Equal(cand2.Timestamp.UtcTicks, nearest.Timestamp.UtcTicks); // later wins
             else
                 Assert.Equal(d1 < d2 ? cand1.Timestamp.UtcTicks : cand2.Timestamp.UtcTicks, nearest.Timestamp.UtcTicks);
         }

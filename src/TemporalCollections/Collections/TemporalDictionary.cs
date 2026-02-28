@@ -19,29 +19,39 @@ namespace TemporalCollections.Collections
     {
         private readonly ConcurrentDictionary<TKey, List<TemporalItem<TValue>>> _dict = new();
 
-        private static readonly IComparer<TemporalItem<TValue>> TimestampOnlyComparer
-            = new TimestampOnlyComparerImpl();
-
         /// <summary>
         /// Adds a new value associated with the specified key, timestamped with the current UTC time.
         /// </summary>
         public void Add(TKey key, TValue value)
         {
             var temporalItem = TemporalItem<TValue>.Create(value);
-            var list = _dict.GetOrAdd(key, _ => []);
 
-            lock (list)
+            // Retry loop: if a concurrent RemoveOlderThan/RemoveRange removes the key
+            // between GetOrAdd and lock(list), the list becomes orphaned. We detect this
+            // by verifying the list is still the one in the dictionary after acquiring the lock.
+            while (true)
             {
-                // Because timestamps are strictly increasing across all TemporalItem<TValue>
-                // instances created via TemporalItem<T>.Create, and we never insert items
-                // with arbitrary timestamps, we know that:
-                //
-                //   - For each key, the sequence of timestamps in "list" is strictly increasing.
-                //   - The new "temporalItem" always has the largest (most recent) timestamp.
-                //
-                // Therefore, we can safely append to the end of the list while preserving
-                // the sorted-by-timestamp invariant. No BinarySearch + Insert is needed.
-                list.Add(temporalItem);
+                var list = _dict.GetOrAdd(key, _ => []);
+
+                lock (list)
+                {
+                    // Verify this list is still the one associated with the key.
+                    if (_dict.TryGetValue(key, out var current) && ReferenceEquals(current, list))
+                    {
+                        // Because timestamps are strictly increasing across all TemporalItem<TValue>
+                        // instances created via TemporalItem<T>.Create, and we never insert items
+                        // with arbitrary timestamps, we know that:
+                        //
+                        //   - For each key, the sequence of timestamps in "list" is strictly increasing.
+                        //   - The new "temporalItem" always has the largest (most recent) timestamp.
+                        //
+                        // Therefore, we can safely append to the end of the list while preserving
+                        // the sorted-by-timestamp invariant. No BinarySearch + Insert is needed.
+                        list.Add(temporalItem);
+                        return;
+                    }
+                }
+                // List was removed concurrently; retry with a fresh GetOrAdd.
             }
         }
 
@@ -514,11 +524,5 @@ namespace TemporalCollections.Collections
         }
 
         #endregion
-
-        private sealed class TimestampOnlyComparerImpl : IComparer<TemporalItem<TValue>>
-        {
-            public int Compare(TemporalItem<TValue>? x, TemporalItem<TValue>? y)
-                => x!.Timestamp.UtcTicks.CompareTo(y!.Timestamp.UtcTicks);
-        }
     }
 }
