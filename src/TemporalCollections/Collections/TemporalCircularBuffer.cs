@@ -99,8 +99,8 @@ namespace TemporalCollections.Collections
                     long x = item.Timestamp.UtcTicks;
                     if (f <= x && x <= t)
                         list.Add(item);
-                    // Fast-path possibile: items cronologici → si potrebbe interrompere quando x > t.
-                    // Evitiamo early-break per mantenere IterateOrdered semplice e senza effetti collaterali.
+                    // Possible fast-path: chronological items → we could stop when x > t.
+                    // We avoid early-break to keep IterateOrdered simple and free of side effects.
                 });
                 return list;
             }
