@@ -611,24 +611,6 @@ namespace TemporalCollections.Collections
             CollectAfter(node.Right, time, acc);
         }
 
-        private static int CountWithEndAtOrAfter(Node? node, DateTimeOffset cutoff)
-        {
-            if (node is null) return 0;
-
-            int count = 0;
-
-            if (node.Left is not null && node.Left.MaxEnd >= cutoff)
-                count += CountWithEndAtOrAfter(node.Left, cutoff);
-
-            if (node.End >= cutoff)
-                count++;
-
-            if (node.Right is not null && node.Right.MaxEnd >= cutoff)
-                count += CountWithEndAtOrAfter(node.Right, cutoff);
-
-            return count;
-        }
-
         /// <summary>
         /// Finds the node with the greatest Start <= <paramref name="target"/>; returns <c>null</c> if none.
         /// </summary>

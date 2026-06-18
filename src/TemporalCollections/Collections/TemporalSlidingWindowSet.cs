@@ -51,7 +51,9 @@ namespace TemporalCollections.Collections
             {
                 if (kvp.Value.Timestamp.UtcTicks < cutoffTicks)
                 {
-                    _dict.TryRemove(kvp.Key, out _);
+                    // Atomic conditional remove: only delete if the value is still the one observed,
+                    // preventing the removal of a fresh re-Add (with a newer timestamp).
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kvp);
                 }
             }
         }
@@ -92,7 +94,8 @@ namespace TemporalCollections.Collections
             {
                 if (kvp.Value.Timestamp.UtcTicks < c)
                 {
-                    _dict.TryRemove(kvp.Key, out _);
+                    // Atomic conditional remove (see RemoveExpired).
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kvp);
                 }
             }
         }
@@ -156,7 +159,10 @@ namespace TemporalCollections.Collections
             {
                 long x = kvp.Value.Timestamp.UtcTicks;
                 if (f <= x && x <= t)
-                    _dict.TryRemove(kvp.Key, out _);
+                {
+                    // Atomic conditional remove (see RemoveExpired).
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kvp);
+                }
             }
         }
 

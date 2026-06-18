@@ -71,7 +71,10 @@ namespace TemporalCollections.Collections
             {
                 if (kv.Value.Timestamp.UtcTicks < c)
                 {
-                    _dict.TryRemove(kv.Key, out _);
+                    // Atomic conditional remove: only delete if the value is still the one observed,
+                    // preventing the removal of a fresh re-Add (with a newer timestamp) that occurred
+                    // between the timestamp check and the TryRemove call.
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kv);
                 }
             }
         }
@@ -145,7 +148,10 @@ namespace TemporalCollections.Collections
             {
                 long x = kv.Value.Timestamp.UtcTicks;
                 if (f <= x && x <= t)
-                    _dict.TryRemove(kv.Key, out _);
+                {
+                    // Atomic conditional remove (see RemoveOlderThan).
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kv);
+                }
             }
         }
 

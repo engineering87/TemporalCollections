@@ -30,11 +30,20 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Pushes a new item onto the stack, recording the current timestamp (UTC, monotonic).
         /// </summary>
+        /// <remarks>
+        /// The timestamp is generated INSIDE the lock to atomically pair "tick creation" with
+        /// "physical append to the list". This guarantees that the physical order in <c>_items</c>
+        /// matches the chronological order of timestamps even under concurrent pushes, which is
+        /// the invariant relied upon by <see cref="GetLatest"/>, <see cref="GetEarliest"/>,
+        /// <see cref="GetTimeSpan"/>, and the binary search in <see cref="GetNearest"/>.
+        /// </remarks>
         public void Push(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item);
             lock (_lock)
+            {
+                var temporalItem = TemporalItem<T>.Create(item);
                 _items.Add(temporalItem);
+            }
         }
 
         /// <summary>
@@ -176,44 +185,33 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Gets the most recent item by timestamp, or null if empty. O(n).
+        /// Gets the most recent item by timestamp, or null if empty. O(1).
         /// </summary>
+        /// <remarks>
+        /// Items are kept in chronological order: <see cref="Push"/> appends to the tail,
+        /// <see cref="TemporalItem{T}.Create"/> generates strictly increasing UTC ticks, and
+        /// <c>List.RemoveAll</c> (used by <see cref="RemoveOlderThan"/>/<see cref="RemoveRange"/>)
+        /// preserves the relative order of the items that survive. Hence the last element
+        /// always carries the largest timestamp.
+        /// </remarks>
         public override TemporalItem<T>? GetLatest()
         {
             lock (_lock)
             {
-                if (_items.Count == 0) return null;
-
-                TemporalItem<T> best = _items[0];
-                long bestTicks = best.Timestamp.UtcTicks;
-
-                for (int i = 1; i < _items.Count; i++)
-                {
-                    long x = _items[i].Timestamp.UtcTicks;
-                    if (x > bestTicks) { bestTicks = x; best = _items[i]; }
-                }
-                return best;
+                int n = _items.Count;
+                return n == 0 ? null : _items[n - 1];
             }
         }
 
         /// <summary>
-        /// Gets the earliest item by timestamp, or null if empty. O(n).
+        /// Gets the earliest item by timestamp, or null if empty. O(1).
         /// </summary>
+        /// <remarks>See <see cref="GetLatest"/> for the ordering invariant rationale.</remarks>
         public override TemporalItem<T>? GetEarliest()
         {
             lock (_lock)
             {
-                if (_items.Count == 0) return null;
-
-                TemporalItem<T> best = _items[0];
-                long bestTicks = best.Timestamp.UtcTicks;
-
-                for (int i = 1; i < _items.Count; i++)
-                {
-                    long x = _items[i].Timestamp.UtcTicks;
-                    if (x < bestTicks) { bestTicks = x; best = _items[i]; }
-                }
-                return best;
+                return _items.Count == 0 ? null : _items[0];
             }
         }
 

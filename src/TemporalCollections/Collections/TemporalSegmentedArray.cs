@@ -451,7 +451,7 @@ namespace TemporalCollections.Collections
                     return [];
                 long c = time.UtcTicks;
                 var list = new List<TemporalItem<T>>();
-                int sIdx = FirstSegWithMaxGte(c + 1);
+                int sIdx = FirstSegWithMaxGt(c);
                 if (sIdx < 0) 
                     return [];
                 for (int s = sIdx; s < _segments.Count; s++)
@@ -629,6 +629,29 @@ namespace TemporalCollections.Collections
             {
                 int mid = lo + ((hi - lo) >> 1);
                 if (_segments[mid].MaxTicks < ticks) 
+                    lo = mid + 1; else hi = mid;
+            }
+            return lo;
+        }
+
+        /// <summary>
+        /// Finds the first segment whose <c>MaxTicks</c> is strictly greater than <paramref name="ticks"/>.
+        /// Equivalent to <see cref="FirstSegWithMaxGte(long)"/> with <c>ticks + 1</c>, but overflow-safe
+        /// for the corner case where <paramref name="ticks"/> is <see cref="long.MaxValue"/>.
+        /// </summary>
+        /// <param name="ticks">Target UTC ticks.</param>
+        /// <returns>Segment index; -1 if no segment satisfies the condition.</returns>
+        private int FirstSegWithMaxGt(long ticks)
+        {
+            int lo = 0, hi = _segments.Count - 1;
+            if (hi < 0)
+                return -1;
+            if (_segments[hi].MaxTicks <= ticks)
+                return -1;
+            while (lo < hi)
+            {
+                int mid = lo + ((hi - lo) >> 1);
+                if (_segments[mid].MaxTicks <= ticks)
                     lo = mid + 1; else hi = mid;
             }
             return lo;
