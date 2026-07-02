@@ -352,6 +352,13 @@ namespace TemporalCollections.Collections
         /// </summary>
         private record QueueItem : TemporalItem<TValue>, IComparable<QueueItem>
         {
+            // Monotonic, collision-free sequence number used as a strict-ordering
+            // tie-breaker. Replaces RuntimeHelpers.GetHashCode (which can collide
+            // and cause SortedSet to drop distinct items).
+            private static long _seqCounter;
+
+            private readonly long _seq;
+
             /// <summary>Gets the priority of the item.</summary>
             public TPriority Priority { get; }
 
@@ -362,10 +369,12 @@ namespace TemporalCollections.Collections
                 : base(value, timestamp)
             {
                 Priority = priority;
+                _seq = Interlocked.Increment(ref _seqCounter);
             }
 
             /// <summary>
-            /// Compares this item to another based on priority, then timestamp, then runtime id for strict ordering.
+            /// Compares this item to another based on priority, then timestamp, then a
+            /// monotonic sequence id for a strict weak ordering.
             /// </summary>
             public int CompareTo(QueueItem? other)
             {
@@ -377,10 +386,8 @@ namespace TemporalCollections.Collections
                 c = Timestamp.CompareTo(other.Timestamp);
                 if (c != 0) return c;
 
-                // Tie-breaker: ensure strict weak ordering to avoid SortedSet dropping distinct items
-                int hx = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
-                int hy = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(other);
-                return hx.CompareTo(hy);
+                // Final tie-breaker: monotonic sequence id, collision-free.
+                return _seq.CompareTo(other._seq);
             }
         }
 

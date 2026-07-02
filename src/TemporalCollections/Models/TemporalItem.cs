@@ -19,6 +19,18 @@ namespace TemporalCollections.Models
         // Initialize with current UtcNow ticks to avoid starting at zero.
         private static long _lastUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
 
+        // Monotonic sequence number assigned to every item produced via Create().
+        // Used by TimestampComparer as a deterministic, collision-free tie-break,
+        // avoiding the (rare but possible) hash-code collisions of RuntimeHelpers.GetHashCode
+        // that could otherwise cause sorted sets/maps to drop distinct items.
+        private static long _seq;
+
+        /// <summary>
+        /// Monotonic sequence id assigned by <see cref="Create(T)"/> (0 when the item was
+        /// built via the public constructor without going through <see cref="Create(T)"/>).
+        /// </summary>
+        internal long Seq { get; init; }
+
         // Legacy shim (UTC)
         public DateTime TimestampUtc => Timestamp.UtcDateTime;
 
@@ -46,8 +58,9 @@ namespace TemporalCollections.Models
             }
             while (Interlocked.CompareExchange(ref _lastUtcTicks, next, observed) != observed);
 
-            // Construct a UTC DateTimeOffset from ticks (offset zero).
-            return new TemporalItem<T>(value, new DateTimeOffset(next, TimeSpan.Zero));
+            // Construct a UTC DateTimeOffset from ticks (offset zero) and stamp a fresh seq.
+            long seq = Interlocked.Increment(ref _seq);
+            return new TemporalItem<T>(value, new DateTimeOffset(next, TimeSpan.Zero)) { Seq = seq };
         }
 
         /// <summary>
@@ -83,8 +96,17 @@ namespace TemporalCollections.Models
                     if (c != 0) return c;
                 }
 
+                // Tertiary: monotonic sequence id (collision-free for items built via Create()).
+                if (x.Seq != 0 || y.Seq != 0)
+                {
+                    c = x.Seq.CompareTo(y.Seq);
+                    if (c != 0) return c;
+                }
+
                 // Final: runtime identity to keep a strict ordering and avoid
-                // dropping distinct items from sorted sets/maps.
+                // dropping distinct items from sorted sets/maps. Used only as a
+                // last-resort fallback when both items have seq=0 (e.g. items
+                // built via the public constructor instead of Create()).
                 int hx = RuntimeHelpers.GetHashCode(x);
                 int hy = RuntimeHelpers.GetHashCode(y);
                 return hx.CompareTo(hy);

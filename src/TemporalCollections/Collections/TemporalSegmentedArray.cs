@@ -84,7 +84,11 @@ namespace TemporalCollections.Collections
                 if (removeCount <= 0) return;
                 int tail = Count - (start + removeCount);
                 if (tail > 0) Array.Copy(Items, start + removeCount, Items, start, tail);
-                Count -= removeCount;
+                int newCount = Count - removeCount;
+                // Clear the now-stale tail so we don't keep references to removed items
+                // alive (matters for reference T to allow GC).
+                Array.Clear(Items, newCount, Count - newCount);
+                Count = newCount;
                 if (Count == 0)
                 {
                     MinTicks = long.MaxValue;
@@ -696,7 +700,8 @@ namespace TemporalCollections.Collections
             right.MinTicks = right.Items[0].Timestamp.UtcTicks;
             right.MaxTicks = right.Items[move - 1].Timestamp.UtcTicks;
 
-            // Shrink left segment
+            // Shrink left segment (clear the moved slots so we don't pin removed values).
+            Array.Clear(seg.Items, startMove, move);
             seg.Count = startMove;
             seg.MinTicks = seg.Items[0].Timestamp.UtcTicks;
             seg.MaxTicks = seg.Items[seg.Count - 1].Timestamp.UtcTicks;

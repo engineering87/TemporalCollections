@@ -485,10 +485,10 @@ namespace TemporalCollections.Collections
 
             if (node.End < cutoff)
             {
-                node = DeleteRoot(node);
-                // Ensure that possible replacement at this position is also checked
-                node = RemoveOlderThanInternal(node, cutoff);
-                return node;
+                // Children are already fully pruned by the recursive calls above,
+                // so no descendant has End < cutoff. DeleteRoot promotes a clean
+                // node, hence no extra recursion is required here.
+                return DeleteRoot(node);
             }
 
             Update(node);
@@ -507,9 +507,8 @@ namespace TemporalCollections.Collections
 
             if (node.Start >= from && node.Start <= to)
             {
-                node = DeleteRoot(node);
-                node = RemoveByStartRange(node, from, to);
-                return node;
+                // Children are already pruned, so the promoted replacement is clean.
+                return DeleteRoot(node);
             }
 
             Update(node);
@@ -523,15 +522,17 @@ namespace TemporalCollections.Collections
         {
             if (node is null) return;
 
-            // Left subtree can overlap only if its MaxEnd >= qs
+            // Left subtree can overlap only if its MaxEnd >= qs.
             if (node.Left is not null && node.Left.MaxEnd >= qs)
                 QueryCollect(node.Left, qs, qe, result);
 
-            // Current node overlaps if Start <= qe && End >= qs
+            // Current node overlaps if Start <= qe && End >= qs.
             if (node.Start <= qe && node.End >= qs)
                 result.Add(new TemporalItem<T>(node.Value, node.Start));
 
-            // Right subtree may have starts <= qe
+            // The right subtree only contains starts >= node.Start. If node.Start
+            // already exceeds qe, every right descendant exceeds qe as well and
+            // cannot overlap [qs, qe], so we can safely prune it.
             if (node.Right is not null && node.Start <= qe)
                 QueryCollect(node.Right, qs, qe, result);
         }
@@ -549,6 +550,7 @@ namespace TemporalCollections.Collections
             if (node.Start <= qe && node.End >= qs)
                 result.Add(node.Value);
 
+            // Same right-subtree pruning as in QueryCollect.
             if (node.Right is not null && node.Start <= qe)
                 QueryValues(node.Right, qs, qe, result);
         }
