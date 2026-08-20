@@ -54,6 +54,21 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Attempts to dequeue the oldest item without throwing if the queue is empty.
+        /// </summary>
+        /// <param name="item">The dequeued item, or <c>null</c> if the queue was empty.</param>
+        /// <returns><c>true</c> if an item was dequeued; <c>false</c> if the queue was empty.</returns>
+        public bool TryDequeue(out TemporalItem<T>? item)
+        {
+            lock (_lock)
+            {
+                if (_queue.Count == 0) { item = null; return false; }
+                item = _queue.Dequeue();
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Returns the item at the front of the queue without removing it.
         /// </summary>
         public TemporalItem<T> Peek()
@@ -63,6 +78,21 @@ namespace TemporalCollections.Collections
                 if (_queue.Count == 0)
                     throw new InvalidOperationException("Queue is empty.");
                 return _queue.Peek();
+            }
+        }
+
+        /// <summary>
+        /// Attempts to peek at the front item without throwing if the queue is empty.
+        /// </summary>
+        /// <param name="item">The front item, or <c>null</c> if the queue was empty.</param>
+        /// <returns><c>true</c> if there is an item; <c>false</c> if the queue was empty.</returns>
+        public bool TryPeek(out TemporalItem<T>? item)
+        {
+            lock (_lock)
+            {
+                if (_queue.Count == 0) { item = null; return false; }
+                item = _queue.Peek();
+                return true;
             }
         }
 

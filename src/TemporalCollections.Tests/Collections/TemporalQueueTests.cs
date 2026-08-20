@@ -829,5 +829,91 @@ namespace TemporalCollections.Tests.Collections
                     $"Non-monotonic ticks at index {i}");
             }
         }
+
+        // -----------------------------------------------------------------------
+        // TryDequeue / TryPeek
+        // -----------------------------------------------------------------------
+
+        [Fact]
+        public void TryDequeue_ReturnsItem_WhenQueueIsNotEmpty()
+        {
+            var queue = new TemporalQueue<int>();
+            queue.Enqueue(42);
+
+            bool result = queue.TryDequeue(out var item);
+
+            Assert.True(result);
+            Assert.NotNull(item);
+            Assert.Equal(42, item!.Value);
+            Assert.Equal(0, queue.Count);
+        }
+
+        [Fact]
+        public void TryDequeue_ReturnsFalse_WhenQueueIsEmpty()
+        {
+            var queue = new TemporalQueue<int>();
+
+            bool result = queue.TryDequeue(out var item);
+
+            Assert.False(result);
+            Assert.Null(item);
+        }
+
+        [Fact]
+        public void TryDequeue_RespectsTimestampOrder()
+        {
+            var queue = new TemporalQueue<int>();
+            queue.Enqueue(1);
+            queue.Enqueue(2);
+            queue.Enqueue(3);
+
+            queue.TryDequeue(out var first);
+            queue.TryDequeue(out var second);
+            queue.TryDequeue(out var third);
+
+            Assert.Equal(1, first!.Value);
+            Assert.Equal(2, second!.Value);
+            Assert.Equal(3, third!.Value);
+            Assert.True(first.Timestamp < second!.Timestamp);
+            Assert.True(second.Timestamp < third!.Timestamp);
+        }
+
+        [Fact]
+        public void TryPeek_ReturnsItem_WithoutRemoving()
+        {
+            var queue = new TemporalQueue<string>();
+            queue.Enqueue("hello");
+
+            bool result = queue.TryPeek(out var item);
+
+            Assert.True(result);
+            Assert.NotNull(item);
+            Assert.Equal("hello", item!.Value);
+            Assert.Equal(1, queue.Count); // item must still be in the queue
+        }
+
+        [Fact]
+        public void TryPeek_ReturnsFalse_WhenQueueIsEmpty()
+        {
+            var queue = new TemporalQueue<string>();
+
+            bool result = queue.TryPeek(out var item);
+
+            Assert.False(result);
+            Assert.Null(item);
+        }
+
+        [Fact]
+        public void TryPeek_ReturnsSameItemAsDequeue()
+        {
+            var queue = new TemporalQueue<int>();
+            queue.Enqueue(99);
+
+            queue.TryPeek(out var peeked);
+            var dequeued = queue.Dequeue();
+
+            Assert.Equal(peeked!.Value, dequeued.Value);
+            Assert.Equal(peeked.Timestamp, dequeued.Timestamp);
+        }
     }
 }

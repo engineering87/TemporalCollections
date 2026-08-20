@@ -588,5 +588,175 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal(c.Value.Key, nearCeil.Value.Key);
             }
         }
+
+        // -----------------------------------------------------------------------
+        // Binary-search optimizations — boundary semantics
+        // -----------------------------------------------------------------------
+
+        [Fact]
+        public void GetBefore_ExactBoundary_IsStrictlyExclusive()
+        {
+            var dict = new TemporalDictionary<string, int>();
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+
+            // Capture the exact timestamp of item "2"
+            var ts2 = dict.GetLatest()!.Timestamp;
+
+            // GetBefore(ts2) must NOT include item with ts == ts2
+            var before = dict.GetBefore(ts2).ToList();
+            Assert.DoesNotContain(before, i => i.Value.Value == 2 && i.Timestamp == ts2);
+            Assert.Contains(before, i => i.Value.Value == 1);
+        }
+
+        [Fact]
+        public void GetAfter_ExactBoundary_IsStrictlyExclusive()
+        {
+            var dict = new TemporalDictionary<string, int>();
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+
+            // Capture the exact timestamp of item "1"
+            var ts1 = dict.GetEarliest()!.Timestamp;
+
+            // GetAfter(ts1) must NOT include item with ts == ts1
+            var after = dict.GetAfter(ts1).ToList();
+            Assert.DoesNotContain(after, i => i.Value.Value == 1 && i.Timestamp == ts1);
+            Assert.Contains(after, i => i.Value.Value == 2);
+        }
+
+        [Fact]
+        public void CountSince_ExactBoundary_IsInclusive()
+        {
+            var dict = new TemporalDictionary<string, int>();
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+            Thread.Sleep(5);
+            dict.Add("k", 3);
+
+            // Get the timestamp of the middle item
+            var all = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                          .OrderBy(i => i.Timestamp).ToList();
+            var tsMiddle = all[1].Timestamp;
+
+            // CountSince(tsMiddle) must include items with ts >= tsMiddle (items 2 and 3)
+            int count = dict.CountSince(tsMiddle);
+            Assert.Equal(2, count);
+        }
+
+        [Fact]
+        public void CountInRange_BinarySearch_MatchesGetInRangeCount()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("a", 1);
+            Thread.Sleep(5);
+            var tFrom = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("a", 2);
+            Thread.Sleep(5);
+            dict.Add("b", 3);
+            Thread.Sleep(5);
+            var tTo = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("b", 4);
+
+            int expected = dict.GetInRange(tFrom, tTo).Count();
+            int actual   = dict.CountInRange(tFrom, tTo);
+
+            Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public void RemoveRange_BinarySearch_LeavesExactlyOutsideElements()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1); // outside (before)
+            Thread.Sleep(5);
+            var tFrom = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("k", 2); // inside
+            Thread.Sleep(5);
+            dict.Add("k", 3); // inside
+            Thread.Sleep(5);
+            var tTo = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("k", 4); // outside (after)
+
+            dict.RemoveRange(tFrom, tTo);
+
+            var remaining = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                                .Select(i => i.Value.Value).ToList();
+
+            Assert.Equal(2, remaining.Count);
+            Assert.Contains(1, remaining);
+            Assert.Contains(4, remaining);
+            Assert.DoesNotContain(2, remaining);
+            Assert.DoesNotContain(3, remaining);
+        }
+
+        [Fact]
+        public void GetEarliest_AfterRemoveOlderThan_ReflectsNewMinimum()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+            Thread.Sleep(5);
+            var cutoff = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("k", 3);
+
+            dict.RemoveOlderThan(cutoff);
+
+            var earliest = dict.GetEarliest();
+            Assert.NotNull(earliest);
+            Assert.Equal(3, earliest!.Value.Value);
+        }
+
+        [Fact]
+        public void GetLatest_AfterRemoveRange_ReflectsNewMaximum()
+        {
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+            Thread.Sleep(5);
+            var tFrom = DateTime.UtcNow;
+            Thread.Sleep(5);
+            dict.Add("k", 3); // will be removed
+
+            dict.RemoveRange(tFrom, DateTime.UtcNow.AddMinutes(1));
+
+            var latest = dict.GetLatest();
+            Assert.NotNull(latest);
+            Assert.Equal(2, latest!.Value.Value);
+        }
+
+        [Fact]
+        public void RemoveOlderThan_BinarySearch_ExactCutoffIsKept()
+        {
+            // Verify the strict-less-than semantics: items with ts == cutoff must NOT be removed
+            var dict = new TemporalDictionary<string, int>();
+
+            dict.Add("k", 1);
+            Thread.Sleep(5);
+            dict.Add("k", 2);
+
+            // Use the exact timestamp of item "2" as the cutoff
+            var tsCutoff = dict.GetLatest()!.Timestamp;
+
+            dict.RemoveOlderThan(tsCutoff);
+
+            var remaining = dict.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            // Item with ts == tsCutoff must still be present (RemoveOlderThan is strictly <)
+            Assert.Contains(remaining, i => i.Value.Value == 2);
+        }
     }
 }
