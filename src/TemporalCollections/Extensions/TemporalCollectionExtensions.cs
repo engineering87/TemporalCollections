@@ -206,6 +206,46 @@ namespace TemporalCollections.Extensions
         }
 
         /// <summary>
+        /// Counts the number of items whose timestamp is strictly before the specified time.
+        /// </summary>
+        public static int CountBefore<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetBefore(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly after the specified time.
+        /// </summary>
+        public static int CountAfter<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetAfter(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly before the specified time.
+        /// </summary>
+        public static int CountBefore<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetBefore(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly after the specified time.
+        /// </summary>
+        public static int CountAfter<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetAfter(time).Count();
+        }
+
+        /// <summary>
         /// Groups all temporal items into fixed-size time buckets (e.g., per minute, hour, day)
         /// and applies a custom aggregation function to each bucket.
         /// </summary>

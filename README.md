@@ -133,6 +133,12 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **TryGetAtOrAfter(DateTimeOffset time, out TemporalItem<T>? item)**  
   Attempts to retrieve the earliest item whose timestamp is greater than or equal to the specified `time`.
 
+- **CountBefore(DateTimeOffset time)**  
+  Counts the number of items whose timestamp is strictly before the specified `time`.
+
+- **CountAfter(DateTimeOffset time)**  
+  Counts the number of items whose timestamp is strictly after the specified `time`.
+
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
 
 ## 🚀 Getting Started with TemporalCollections

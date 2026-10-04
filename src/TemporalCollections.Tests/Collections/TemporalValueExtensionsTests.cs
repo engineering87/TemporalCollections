@@ -224,6 +224,47 @@ namespace TemporalCollections.Tests.Collections
         }
 
         [Fact]
+        public void CountBefore_And_CountAfter_ReturnExpectedExclusiveCounts()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
+            Assert.Equal(0, source.CountBefore(items[0].Timestamp));
+            Assert.Equal(0, source.CountAfter(items[^1].Timestamp));
+        }
+
+        [Fact]
+        public void CountBefore_And_CountAfter_WorkWithDateTimeOverloads()
+        {
+            var source = MakeSpacedIntQueue(1, 2, 3);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp.UtcDateTime;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
+        }
+
+        [Fact]
+        public void CountBefore_And_CountAfter_WorkForTemporalDictionaryValues()
+        {
+            var source = new TemporalDictionary<string, int>();
+            source.Add("a", 100);
+            Thread.Sleep(2);
+            source.Add("b", 200);
+            Thread.Sleep(2);
+            source.Add("c", 300);
+
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
+        }
+
+        [Fact]
         public void BucketBy_GroupsIntoSingleDailyBucket_AndAppliesAggregator()
         {
             var source = MakeIntQueue(1, 2, 3, 4);
