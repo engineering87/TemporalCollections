@@ -175,6 +175,55 @@ namespace TemporalCollections.Tests.Collections
         }
 
         [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_ReturnTrueAndMatchedItem()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp;
+            var betweenMiddleAndLast = exactMiddle.AddMilliseconds(1);
+
+            var foundBefore = source.TryGetAtOrBefore(betweenMiddleAndLast, out var beforeItem);
+            var foundAfter = source.TryGetAtOrAfter(betweenMiddleAndLast, out var afterItem);
+
+            Assert.True(foundBefore);
+            Assert.NotNull(beforeItem);
+            Assert.Equal(20, beforeItem!.Value);
+            Assert.True(foundAfter);
+            Assert.NotNull(afterItem);
+            Assert.Equal(30, afterItem!.Value);
+        }
+
+        [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_ReturnFalseAndNullWhenNoMatchExists()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            var foundBefore = source.TryGetAtOrBefore(items[0].Timestamp.AddMilliseconds(-1), out var beforeItem);
+            var foundAfter = source.TryGetAtOrAfter(items[^1].Timestamp.AddMilliseconds(1), out var afterItem);
+
+            Assert.False(foundBefore);
+            Assert.Null(beforeItem);
+            Assert.False(foundAfter);
+            Assert.Null(afterItem);
+        }
+
+        [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_WorkWithDateTimeOverloads()
+        {
+            var source = MakeSpacedIntQueue(1, 2, 3);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp.UtcDateTime;
+
+            Assert.True(source.TryGetAtOrBefore(exactMiddle, out var beforeItem));
+            Assert.NotNull(beforeItem);
+            Assert.Equal(2, beforeItem!.Value);
+            Assert.True(source.TryGetAtOrAfter(exactMiddle, out var afterItem));
+            Assert.NotNull(afterItem);
+            Assert.Equal(2, afterItem!.Value);
+        }
+
+        [Fact]
         public void BucketBy_GroupsIntoSingleDailyBucket_AndAppliesAggregator()
         {
             var source = MakeIntQueue(1, 2, 3, 4);

@@ -129,6 +129,17 @@ namespace TemporalCollections.Extensions
         }
 
         /// <summary>
+        /// Attempts to retrieve the latest item whose timestamp is less than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrBefore<T>(this ITimeQueryable<T> source, DateTimeOffset time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrBefore(time);
+            return item is not null;
+        }
+
+        /// <summary>
         /// Retrieves the earliest item whose timestamp is greater than or equal to the specified time.
         /// Returns <c>null</c> when no such item exists.
         /// </summary>
@@ -137,6 +148,17 @@ namespace TemporalCollections.Extensions
             ArgumentNullException.ThrowIfNull(source);
 
             return source.GetInRange(time, DateTimeOffset.MaxValue).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the earliest item whose timestamp is greater than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrAfter<T>(this ITimeQueryable<T> source, DateTimeOffset time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrAfter(time);
+            return item is not null;
         }
 
         /// <summary>
@@ -151,6 +173,17 @@ namespace TemporalCollections.Extensions
         }
 
         /// <summary>
+        /// Attempts to retrieve the latest item whose timestamp is less than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrBefore<T>(this ITimeQueryable<T> source, DateTime time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrBefore(time);
+            return item is not null;
+        }
+
+        /// <summary>
         /// Retrieves the earliest item whose timestamp is greater than or equal to the specified time.
         /// Returns <c>null</c> when no such item exists.
         /// </summary>
@@ -159,6 +192,17 @@ namespace TemporalCollections.Extensions
             ArgumentNullException.ThrowIfNull(source);
 
             return source.GetInRange(time, DateTime.MaxValue).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the earliest item whose timestamp is greater than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrAfter<T>(this ITimeQueryable<T> source, DateTime time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrAfter(time);
+            return item is not null;
         }
 
         /// <summary>
