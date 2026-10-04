@@ -121,6 +121,12 @@ All temporal collections implement the `ITimeQueryable<T>` interface, which prov
 - **GetNearest(DateTimeOffset time)**  
   Retrieves the item whose timestamp is closest to the specified `time`.
 
+- **GetAtOrBefore(DateTimeOffset time)**  
+  Retrieves the latest item whose timestamp is less than or equal to the specified `time`, or `null` if none exists.
+
+- **GetAtOrAfter(DateTimeOffset time)**  
+  Retrieves the earliest item whose timestamp is greater than or equal to the specified `time`, or `null` if none exists.
+
 These methods collectively support efficient and thread-safe temporal queries and cleanups, allowing each collection to manage its items according to their timestamps while exposing a unified API.
 
 ## 🚀 Getting Started with TemporalCollections
