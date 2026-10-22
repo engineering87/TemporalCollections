@@ -45,22 +45,54 @@ namespace TemporalCollections.Models
         {
             // Current wall clock in UTC ticks (offset = 0).
             long nowTicks = DateTimeOffset.UtcNow.UtcTicks;
-
-            long observed; // last observed ticks
-            long next;     // candidate next ticks (>= observed + 1)
-
-            // Ensure strictly increasing ticks using an atomic CAS loop:
-            //   next = max(nowTicks, observed + 1)
-            do
-            {
-                observed = Volatile.Read(ref _lastUtcTicks);
-                next = nowTicks <= observed ? observed + 1 : nowTicks;
-            }
-            while (Interlocked.CompareExchange(ref _lastUtcTicks, next, observed) != observed);
+            long next = NextMonotonic(ref _lastUtcTicks, nowTicks);
 
             // Construct a UTC DateTimeOffset from ticks (offset zero) and stamp a fresh seq.
             long seq = Interlocked.Increment(ref _seq);
             return new TemporalItem<T>(value, new DateTimeOffset(next, TimeSpan.Zero)) { Seq = seq };
+        }
+
+        // Per-clock monotonic state for custom TimeProviders, so that a fake/manual clock
+        // is not pushed forward by timestamps produced with the system clock (and vice versa).
+        private static readonly ConditionalWeakTable<TimeProvider, StrongBox<long>> _customClocks = new();
+
+        /// <summary>
+        /// Creates a new item stamped with a strictly increasing UTC timestamp obtained from
+        /// <paramref name="timeProvider"/>. When <paramref name="timeProvider"/> is
+        /// <see cref="TimeProvider.System"/> this is equivalent to <see cref="Create(T)"/>.
+        /// Monotonicity is guaranteed per closed generic type and per <see cref="TimeProvider"/> instance.
+        /// </summary>
+        /// <param name="value">Value to wrap.</param>
+        /// <param name="timeProvider">Clock used to obtain the current UTC time.</param>
+        /// <returns>New <see cref="TemporalItem{T}"/> with monotonic UTC timestamp.</returns>
+        public static TemporalItem<T> Create(T value, TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+
+            if (ReferenceEquals(timeProvider, TimeProvider.System))
+                return Create(value);
+
+            long nowTicks = timeProvider.GetUtcNow().UtcTicks;
+            var state = _customClocks.GetValue(timeProvider, _ => new StrongBox<long>(long.MinValue));
+            long next = NextMonotonic(ref state.Value, nowTicks);
+
+            long seq = Interlocked.Increment(ref _seq);
+            return new TemporalItem<T>(value, new DateTimeOffset(next, TimeSpan.Zero)) { Seq = seq };
+        }
+
+        // Ensure strictly increasing ticks using an atomic CAS loop:
+        //   next = max(nowTicks, observed + 1)
+        private static long NextMonotonic(ref long last, long nowTicks)
+        {
+            long observed;
+            long next;
+            do
+            {
+                observed = Volatile.Read(ref last);
+                next = nowTicks <= observed ? observed + 1 : nowTicks;
+            }
+            while (Interlocked.CompareExchange(ref last, next, observed) != observed);
+            return next;
         }
 
         /// <summary>

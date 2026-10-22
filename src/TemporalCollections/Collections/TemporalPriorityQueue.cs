@@ -22,10 +22,21 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Initializes a new instance of the <see cref="TemporalPriorityQueue{TPriority, TValue}"/> class.
         /// </summary>
-        public TemporalPriorityQueue()
+        public TemporalPriorityQueue() : this(TimeProvider.System)
         {
+        }
+
+        /// <summary>
+        /// Initializes a new instance using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalPriorityQueue(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
             _set = new SortedSet<QueueItem>(new QueueItemComparer());
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Gets the number of items currently in the queue.
@@ -44,7 +55,7 @@ namespace TemporalCollections.Collections
         public void Enqueue(TValue value, TPriority priority)
         {
             // TemporalItem.Create ensures strictly increasing DateTimeOffset UTC timestamps.
-            var ti = TemporalItem<TValue>.Create(value);
+            var ti = TemporalItem<TValue>.Create(value, _timeProvider);
             lock (_lock)
             {
                 _set.Add(new QueueItem(ti.Value, priority, ti.Timestamp));

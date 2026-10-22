@@ -476,6 +476,22 @@ This approach ensures:
 
 By enforcing this monotonic timestamp ordering, the temporal collections can rely on consistent time-based queries and maintain correct chronological order of items.
 
+## Custom Clock (`TimeProvider`)
+All collections accept an optional `TimeProvider` (.NET 8+) used for timestamps and expiration. Existing constructors keep using `TimeProvider.System`, so current code is unaffected.
+
+```csharp
+using Microsoft.Extensions.Time.Testing; // FakeTimeProvider (optional, for tests)
+
+var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+var window = new TemporalSlidingWindowSet<string>(TimeSpan.FromMinutes(5), clock);
+
+window.Add("a");
+clock.Advance(TimeSpan.FromMinutes(6)); // no real waiting
+window.RemoveExpired();                 // "a" is removed
+```
+
+`TemporalItem<T>.Create(value, timeProvider)` is also available. Monotonicity is guaranteed per closed generic type and per `TimeProvider` instance.
+
 ## 📈 Performance Benchmarks
 We provide detailed performance measurements for all temporal data structures, including insertion, range queries, and removal operations.  
 The full benchmark results are available here: [docs/benchmarks/benchmarks.md](docs/benchmarks/benchmarks.md)

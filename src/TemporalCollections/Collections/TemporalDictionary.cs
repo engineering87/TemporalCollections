@@ -18,13 +18,30 @@ namespace TemporalCollections.Collections
         where TKey : notnull
     {
         private readonly ConcurrentDictionary<TKey, List<TemporalItem<TValue>>> _dict = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new dictionary using the system clock for timestamps.
+        /// </summary>
+        public TemporalDictionary() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new dictionary using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalDictionary(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Adds a new value associated with the specified key, timestamped with the current UTC time.
         /// </summary>
         public void Add(TKey key, TValue value)
         {
-            var temporalItem = TemporalItem<TValue>.Create(value);
+            var temporalItem = TemporalItem<TValue>.Create(value, _timeProvider);
 
             // Retry loop: if a concurrent RemoveOlderThan/RemoveRange removes the key
             // between GetOrAdd and lock(list), the list becomes orphaned. We detect this

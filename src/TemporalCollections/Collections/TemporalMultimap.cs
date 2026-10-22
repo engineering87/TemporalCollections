@@ -18,6 +18,23 @@ namespace TemporalCollections.Collections
         private readonly Dictionary<TKey, List<TemporalItem<KeyValuePair<TKey, TValue>>>> _byKey = [];
         private int _count;
         private readonly Lock _lock = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new multimap using the system clock for timestamps.
+        /// </summary>
+        public TemporalMultimap() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new multimap using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalMultimap(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>Returns the total number of items currently stored (across all keys).</summary>
         public int Count 
@@ -51,7 +68,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public TemporalItem<KeyValuePair<TKey, TValue>> AddValue(TKey key, TValue value)
         {
-            var item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value));
+            var item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value), _timeProvider);
             lock (_lock)
             {
                 if (!_byKey.TryGetValue(key, out var list))

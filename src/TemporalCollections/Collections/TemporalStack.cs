@@ -14,6 +14,23 @@ namespace TemporalCollections.Collections
     {
         private readonly List<TemporalItem<T>> _items = [];
         private readonly Lock _lock = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new stack using the system clock for timestamps.
+        /// </summary>
+        public TemporalStack() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new stack using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalStack(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Gets the number of items currently in the stack (O(1)).
@@ -41,7 +58,7 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                var temporalItem = TemporalItem<T>.Create(item);
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
                 _items.Add(temporalItem);
             }
         }

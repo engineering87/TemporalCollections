@@ -22,16 +22,30 @@ namespace TemporalCollections.Collections
         /// </summary>
         /// <param name="comparer">Equality comparer for items; defaults to <see cref="EqualityComparer{T}.Default"/>.</param>
         public TemporalSet(IEqualityComparer<T>? comparer = null)
+            : this(TimeProvider.System, comparer)
         {
+        }
+
+        /// <summary>
+        /// Creates a new temporal set using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        /// <param name="timeProvider">Clock used to timestamp items.</param>
+        /// <param name="comparer">Equality comparer for items; defaults to <see cref="EqualityComparer{T}.Default"/>.</param>
+        public TemporalSet(TimeProvider timeProvider, IEqualityComparer<T>? comparer = null)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
             _dict = new ConcurrentDictionary<T, TemporalItem<T>>(comparer ?? EqualityComparer<T>.Default);
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Adds an item to the set with the current timestamp if not already present.
         /// </summary>
         public bool Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item); // Timestamp is DateTimeOffset UTC (monotonic)
+            var temporalItem = TemporalItem<T>.Create(item, _timeProvider); // Timestamp
             return _dict.TryAdd(item, temporalItem);
         }
 

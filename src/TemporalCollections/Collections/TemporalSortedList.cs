@@ -15,6 +15,23 @@ namespace TemporalCollections.Collections
     {
         private readonly List<TemporalItem<T>> _items = [];
         private readonly Lock _lock = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new sorted list using the system clock for timestamps.
+        /// </summary>
+        public TemporalSortedList() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new sorted list using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalSortedList(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Adds a new item to the list while preserving chronological order.
@@ -30,7 +47,7 @@ namespace TemporalCollections.Collections
         {
             lock (_lock)
             {
-                var temporalItem = TemporalItem<T>.Create(item);
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
 
                 // Fast-path: TemporalItem<T>.Create guarantees strictly increasing UTC ticks
                 // globally per closed generic type, so a new item is virtually always >= the

@@ -148,12 +148,26 @@ namespace TemporalCollections.Collections
         /// </summary>
         /// <param name="segmentCapacity">Maximum number of items per segment; must be &gt; 0.</param>
         public TemporalSegmentedArray(int segmentCapacity = DefaultSegmentCapacity)
+            : this(TimeProvider.System, segmentCapacity)
         {
+        }
+
+        /// <summary>
+        /// Initializes a new <see cref="TemporalSegmentedArray{T}"/> using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        /// <param name="timeProvider">Clock used to timestamp items.</param>
+        /// <param name="segmentCapacity">Maximum number of items per segment; must be &gt; 0.</param>
+        public TemporalSegmentedArray(TimeProvider timeProvider, int segmentCapacity = DefaultSegmentCapacity)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
             if (segmentCapacity < 2)
                 throw new ArgumentOutOfRangeException(nameof(segmentCapacity), "Segment capacity must be at least 2.");
 
+            _timeProvider = timeProvider;
             _segmentCapacity = segmentCapacity;
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Gets the total number of items currently stored.
@@ -237,7 +251,7 @@ namespace TemporalCollections.Collections
         /// <returns>The created <see cref="TemporalItem{T}"/>.</returns>
         public TemporalItem<T> AddValue(T value)
         {
-            var it = TemporalItem<T>.Create(value);
+            var it = TemporalItem<T>.Create(value, _timeProvider);
             Add(it);
             return it;
         }

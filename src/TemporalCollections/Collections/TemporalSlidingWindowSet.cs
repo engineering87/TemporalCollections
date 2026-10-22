@@ -22,20 +22,34 @@ namespace TemporalCollections.Collections
         /// </summary>
         /// <param name="windowSize">The sliding time window duration during which items are considered valid.</param>
         /// <exception cref="ArgumentException">Thrown if <paramref name="windowSize"/> is zero or negative.</exception>
-        public TemporalSlidingWindowSet(TimeSpan windowSize)
+        public TemporalSlidingWindowSet(TimeSpan windowSize) : this(windowSize, TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance with the specified window size and clock used for timestamps and expiration.
+        /// </summary>
+        /// <param name="windowSize">The sliding time window duration during which items are considered valid.</param>
+        /// <param name="timeProvider">Clock used to timestamp items and evaluate expiration.</param>
+        /// <exception cref="ArgumentException">Thrown if <paramref name="windowSize"/> is zero or negative.</exception>
+        public TemporalSlidingWindowSet(TimeSpan windowSize, TimeProvider timeProvider)
         {
             if (windowSize <= TimeSpan.Zero)
                 throw new ArgumentException("Window size must be positive.", nameof(windowSize));
+            ArgumentNullException.ThrowIfNull(timeProvider);
 
             _windowSize = windowSize;
+            _timeProvider = timeProvider;
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Attempts to add an item to the set with the current timestamp.
         /// </summary>
         public bool Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item); // Timestamp is DateTimeOffset UTC (monotonic)
+            var temporalItem = TemporalItem<T>.Create(item, _timeProvider); // Timestamp
             return _dict.TryAdd(item, temporalItem);
         }
 
@@ -44,7 +58,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void RemoveExpired()
         {
-            var cutoff = DateTimeOffset.UtcNow - _windowSize;
+            var cutoff = _timeProvider.GetUtcNow() - _windowSize;
             long cutoffTicks = cutoff.UtcTicks;
 
             foreach (var kvp in _dict)

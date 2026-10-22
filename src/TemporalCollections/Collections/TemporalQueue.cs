@@ -16,6 +16,23 @@ namespace TemporalCollections.Collections
         // Oldest -> front ; Newest -> back
         private readonly Queue<TemporalItem<T>> _queue = new();
         private readonly Lock _lock = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new queue using the system clock for timestamps.
+        /// </summary>
+        public TemporalQueue() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new queue using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalQueue(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Gets the total number of items currently in the queue (O(1)).
@@ -33,7 +50,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Enqueue(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item);
+            var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
             lock (_lock)
             {
                 _queue.Enqueue(temporalItem);

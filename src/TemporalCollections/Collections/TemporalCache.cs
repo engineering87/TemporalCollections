@@ -396,7 +396,7 @@ namespace TemporalCollections.Collections
 
         private Entry CreateEntry(TKey key, TValue value, TimeSpan ttl)
         {
-            var item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value));
+            var item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value), _timeProvider);
             return new Entry(item, ttl, AddTicks(NowTicks, ttl));
         }
 
