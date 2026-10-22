@@ -39,6 +39,7 @@ class Program
             typeof(TemporalCircularBufferBenchmarks),
             typeof(TemporalMultimapBenchmarks),
             typeof(TemporalSegmentedArrayBenchmarks),
+            typeof(TemporalCacheBenchmarks),
         };
 
         var allSummaries = new List<Summary>();

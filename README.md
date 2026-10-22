@@ -63,6 +63,7 @@ At the heart of all collections lies the `TemporalItem<T>` struct:
 | TemporalDictionary<TKey, TValue> | Thread-safe dictionary where each key maps to multiple timestamped values. Supports add, remove, and efficient binary-search range queries.| Yes           | Per-key chronological       | Key-based access, binary-search range queries and cleanup.            |
 | TemporalMultimap<TKey, TValue>   | Thread-safe multimap where each key maps to multiple timestamped values with global time-based queries. | Yes           | Per-key chronological       | Multiple values per key, per-key range queries and global time view.  |
 | TemporalCircularBuffer<T>        | Thread-safe fixed-size circular buffer with timestamped items. Overwrites oldest items on overflow.     | Yes           | FIFO (circular)             | Fixed size, efficient overwriting and time queries.                   |
+| TemporalCache<TKey, TValue>      | Thread-safe key/value cache with per-entry TTL. Supports absolute or sliding expiration and `TimeProvider`. | Yes        | Unordered (by key)          | TTL expiration, `GetOrAdd`, `Touch`, time queries over live entries.  |
 
 ## Usage Guidance
 | Collection Name                  | When to Use                                                                                                       | When Not to Use                                                                                  |
@@ -78,6 +79,7 @@ At the heart of all collections lies the `TemporalItem<T>` struct:
 | TemporalDictionary<TKey, TValue> | When key-based access combined with timestamp tracking and efficient range queries are needed. Uses binary search internally for O(log n) range operations.| If you store a single value per key per time point (use TemporalSortedList) or need global sorted access.   |
 | TemporalMultimap<TKey, TValue>   | When each key can have multiple timestamped values and you need per-key queries and/or a global time-ordered view.| If you store a single value per key (use TemporalDictionary) or need ordering by non-time fields.|
 | TemporalCircularBuffer<T>        | When you want a fixed-size buffer that overwrites oldest items with timestamp tracking.                            | If you need unbounded storage or complex queries.                                               |
+| TemporalCache<TKey, TValue>      | When you need a key/value cache whose entries expire after a TTL (absolute or sliding), with time-based queries.   | If you need multiple values per key (use TemporalDictionary) or size-based eviction (LRU).      |
 
 ## ITimeQueryable<T> Interface
 
@@ -418,6 +420,32 @@ Console.WriteLine($"Overlaps: {string.Join(", ", overlapValues)}");
 tree.RemoveOlderThan(now.AddMinutes(9));
 ```
 
+**TemporalCache<TKey, TValue>**
+
+```csharp
+using System;
+using TemporalCollections.Collections;
+
+// Entries expire 5 minutes after write; use slidingExpiration: true to extend on read
+var cache = new TemporalCache<string, int>(TimeSpan.FromMinutes(5));
+
+cache.Set("user:1", 42);
+cache.Set("token", 7, TimeSpan.FromSeconds(30)); // per-entry TTL
+
+if (cache.TryGetValue("user:1", out var value))
+    Console.WriteLine($"user:1 = {value}");
+
+var computed = cache.GetOrAdd("user:2", _ => 99);
+var ttl = cache.GetTimeToLive("token"); // remaining lifetime or null
+cache.Touch("user:1");                  // reset lifetime
+
+// Eager cleanup of expired entries
+int removed = cache.RemoveExpired();
+
+// Time queries on write timestamps of live entries
+var recent = cache.GetAfter(DateTime.UtcNow.AddMinutes(-1));
+```
+
 ### Common queries via `ITimeQueryable<T>`
 
 ```csharp
@@ -469,6 +497,7 @@ All collections are thread-safe. Locking granularity and common operations (amor
 | TemporalDictionary      | concurrent dict + per-list lock            | O(1) avg                                | **O(log n + m)**      | O(log k)                     |
 | TemporalMultimap        | single lock; per-key ordered lists         | O(1) avg                                | O(n + m log m)        | O(n)                         |
 | TemporalCircularBuffer  | single lock; ring overwrite                | O(1)                                    | O(n)                  | O(n)                         |
+| TemporalCache           | concurrent dict; atomic conditional updates| O(1) avg                                | O(n + m log m)        | O(n)                         |
 
 `n` = items, `m` = matches, `k` = removed.
 
