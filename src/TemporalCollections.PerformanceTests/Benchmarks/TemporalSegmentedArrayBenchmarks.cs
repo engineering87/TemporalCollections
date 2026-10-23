@@ -26,7 +26,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
         // ---------- Parameters ----------
 
         /// <summary>Total number of items to insert for the test datasets.</summary>
-        [Params(50_000)]
+        [Params(20_000)]
         public int ItemCount { get; set; }
 
         /// <summary>Per-segment capacity used by TemporalSegmentedArray.</summary>

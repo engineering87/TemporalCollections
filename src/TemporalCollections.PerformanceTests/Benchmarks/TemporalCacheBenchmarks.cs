@@ -17,7 +17,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
         {
             _cache = new TemporalCache<int, int>(TimeSpan.FromMinutes(10));
             _slidingCache = new TemporalCache<int, int>(TimeSpan.FromMinutes(10), slidingExpiration: true);
-            _testData = Enumerable.Range(0, 10000).ToList();
+            _testData = Enumerable.Range(0, 5000).ToList();
 
             foreach (var item in _testData)
             {
@@ -26,7 +26,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             }
         }
 
-        [Benchmark(Description = "Set 10,000 items")]
+        [Benchmark(Description = "Set 5,000 items")]
         public void SetItems()
         {
             foreach (var item in _testData)
@@ -35,7 +35,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             }
         }
 
-        [Benchmark(Description = "TryGetValue 10,000 items (absolute)")]
+        [Benchmark(Description = "TryGetValue 5,000 items (absolute)")]
         public int TryGetValueAbsolute()
         {
             int sum = 0;
@@ -46,7 +46,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             return sum;
         }
 
-        [Benchmark(Description = "TryGetValue 10,000 items (sliding)")]
+        [Benchmark(Description = "TryGetValue 5,000 items (sliding)")]
         public int TryGetValueSliding()
         {
             int sum = 0;
@@ -57,7 +57,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             return sum;
         }
 
-        [Benchmark(Description = "GetOrAdd 10,000 items")]
+        [Benchmark(Description = "GetOrAdd 5,000 items")]
         public int GetOrAddItems()
         {
             int sum = 0;

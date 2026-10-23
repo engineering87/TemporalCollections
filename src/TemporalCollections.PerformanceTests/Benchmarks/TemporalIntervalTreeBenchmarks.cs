@@ -1,4 +1,4 @@
-﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
+// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using BenchmarkDotNet.Attributes;
 using TemporalCollections.Collections;
@@ -16,7 +16,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
         public void Setup()
         {
             _tree = new TemporalIntervalTree<int>();
-            _testData = Enumerable.Range(0, 10000).ToList();
+            _testData = Enumerable.Range(0, 5000).ToList();
 
             var now = DateTime.UtcNow;
             _intervals = new List<(DateTime, DateTime)>(_testData.Count);
@@ -29,7 +29,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
             }
         }
 
-        [Benchmark(Description = "Insert 10,000 intervals")]
+        [Benchmark(Description = "Insert 5,000 intervals")]
         public void AddItems()
         {
             for (int i = 0; i < _testData.Count; i++)

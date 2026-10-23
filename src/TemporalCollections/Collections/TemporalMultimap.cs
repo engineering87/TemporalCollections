@@ -260,7 +260,8 @@ namespace TemporalCollections.Collections
                 if (f > t) 
                     (f, t) = (t, f);
 
-                var acc = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
+                var runs = new List<Run>();
+                int total = 0;
                 foreach (var list in _byKey.Values)
                 {
                     if (list.Count == 0) continue;
@@ -269,14 +270,14 @@ namespace TemporalCollections.Collections
 
                     int i0 = LowerBound(list, f);
                     int i1 = UpperExclusive(list, t);
-                    for (int i = i0; i < i1; i++) 
-                        acc.Add(list[i]);
+                    if (i0 < i1)
+                    {
+                        runs.Add(new Run(list, i0, i1));
+                        total += i1 - i0;
+                    }
                 }
 
-                if (acc.Count <= 1) 
-                    return acc.ToArray();
-                acc.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
-                return acc.ToArray();
+                return MergeRuns(runs, total);
             }
         }
 
@@ -395,21 +396,22 @@ namespace TemporalCollections.Collections
                     return [];
                 long c = time.UtcTicks;
 
-                var acc = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
+                var runs = new List<Run>();
+                int total = 0;
                 foreach (var list in _byKey.Values)
                 {
                     if (list.Count == 0) continue;
                     if (list[0].Timestamp.UtcTicks >= c) continue;
 
                     int end = LowerBound(list, c); // [0..end-1] are < c
-                    for (int i = 0; i < end; i++) 
-                        acc.Add(list[i]);
+                    if (end > 0)
+                    {
+                        runs.Add(new Run(list, 0, end));
+                        total += end;
+                    }
                 }
 
-                if (acc.Count <= 1) 
-                    return acc.ToArray();
-                acc.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
-                return acc.ToArray();
+                return MergeRuns(runs, total);
             }
         }
 
@@ -422,21 +424,22 @@ namespace TemporalCollections.Collections
                     return [];
                 long c = time.UtcTicks;
 
-                var acc = new List<TemporalItem<KeyValuePair<TKey, TValue>>>();
+                var runs = new List<Run>();
+                int total = 0;
                 foreach (var list in _byKey.Values)
                 {
                     if (list.Count == 0) continue;
                     if (list[^1].Timestamp.UtcTicks <= c) continue;
 
                     int start = UpperExclusive(list, c); // first > c
-                    for (int i = start; i < list.Count; i++) 
-                        acc.Add(list[i]);
+                    if (start < list.Count)
+                    {
+                        runs.Add(new Run(list, start, list.Count));
+                        total += list.Count - start;
+                    }
                 }
 
-                if (acc.Count <= 1)
-                    return acc.ToArray();
-                acc.Sort((a, b) => a.Timestamp.UtcTicks.CompareTo(b.Timestamp.UtcTicks));
-                return acc.ToArray();
+                return MergeRuns(runs, total);
             }
         }
 
@@ -585,6 +588,58 @@ namespace TemporalCollections.Collections
         }
 
         // ---------- Private helpers ----------
+
+        /// <summary>A contiguous, timestamp-sorted slice [Start, End) of a per-key list.</summary>
+        private readonly record struct Run(List<TemporalItem<KeyValuePair<TKey, TValue>>> List, int Start, int End);
+
+        /// <summary>
+        /// K-way merge of per-key sorted slices into a single array ordered by timestamp.
+        /// Complexity: O(n log k) where k is the number of slices, instead of O(n log n) for a full sort.
+        /// </summary>
+        private static TemporalItem<KeyValuePair<TKey, TValue>>[] MergeRuns(List<Run> runs, int total)
+        {
+            if (total == 0)
+                return [];
+
+            var result = new TemporalItem<KeyValuePair<TKey, TValue>>[total];
+
+            if (runs.Count == 1)
+            {
+                var single = runs[0];
+                single.List.CopyTo(single.Start, result, 0, total);
+                return result;
+            }
+
+            var pos = new int[runs.Count];
+            var heap = new PriorityQueue<int, long>(runs.Count);
+            for (int r = 0; r < runs.Count; r++)
+            {
+                pos[r] = runs[r].Start;
+                heap.Enqueue(r, runs[r].List[pos[r]].Timestamp.UtcTicks);
+            }
+
+            int w = 0;
+            while (heap.TryDequeue(out int r, out _))
+            {
+                var run = runs[r];
+                var list = run.List;
+                int p = pos[r];
+
+                // Drain this run while it stays <= the next smallest head among the other runs.
+                bool hasOther = heap.TryPeek(out _, out long nextTicks);
+                do
+                {
+                    result[w++] = list[p++];
+                }
+                while (p < run.End && (!hasOther || list[p].Timestamp.UtcTicks <= nextTicks));
+
+                pos[r] = p;
+                if (p < run.End)
+                    heap.Enqueue(r, list[p].Timestamp.UtcTicks);
+            }
+
+            return result;
+        }
 
         /// <summary>Per-list lower bound: first index with timestamp ticks &gt;= <paramref name="ticks"/>.</summary>
         private static int LowerBound(List<TemporalItem<KeyValuePair<TKey, TValue>>> list, long ticks)
