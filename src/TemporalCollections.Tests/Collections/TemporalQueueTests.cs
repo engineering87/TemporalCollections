@@ -915,5 +915,30 @@ namespace TemporalCollections.Tests.Collections
             Assert.Equal(peeked!.Value, dequeued.Value);
             Assert.Equal(peeked.Timestamp, dequeued.Timestamp);
         }
+
+        [Fact]
+        public async Task Enqueue_Concurrent_KeepsChronologicalOrder()
+        {
+            const int threads = 8, perThread = 5_000;
+            var queue = new TemporalQueue<int>();
+            using var gate = new Barrier(threads);
+
+            var tasks = Enumerable.Range(0, threads).Select(t => Task.Factory.StartNew(() =>
+            {
+                gate.SignalAndWait();
+                for (int i = 0; i < perThread; i++) queue.Enqueue(t * perThread + i);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
+            await Task.WhenAll(tasks);
+
+            var previous = DateTimeOffset.MinValue;
+            int count = 0;
+            while (queue.TryDequeue(out var item))
+            {
+                Assert.True(previous < item!.Timestamp, $"Out of order at index {count}");
+                previous = item.Timestamp;
+                count++;
+            }
+            Assert.Equal(threads * perThread, count);
+        }
     }
 }

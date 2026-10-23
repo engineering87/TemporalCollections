@@ -68,9 +68,11 @@ namespace TemporalCollections.Collections
         /// </summary>
         public TemporalItem<KeyValuePair<TKey, TValue>> AddValue(TKey key, TValue value)
         {
-            var item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value), _timeProvider);
+            TemporalItem<KeyValuePair<TKey, TValue>> item;
             lock (_lock)
             {
+                // Created under the lock so per-key append order matches timestamp order.
+                item = TemporalItem<KeyValuePair<TKey, TValue>>.Create(new KeyValuePair<TKey, TValue>(key, value), _timeProvider);
                 if (!_byKey.TryGetValue(key, out var list))
                 {
                     list = new List<TemporalItem<KeyValuePair<TKey, TValue>>>(4);

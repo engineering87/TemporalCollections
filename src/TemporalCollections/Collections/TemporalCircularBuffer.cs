@@ -60,10 +60,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
-
             lock (_lock)
             {
+                // Timestamp is created under the lock so that insertion order matches timestamp order.
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
                 _buffer[_head] = temporalItem;
                 _head = (_head + 1) % Capacity;
 

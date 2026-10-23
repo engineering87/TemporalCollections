@@ -660,5 +660,73 @@ namespace TemporalCollections.Tests.Collections
             var tie = tree.GetNearest(mid);
             Assert.Equal("C", tie!.Value);
         }
+
+        /// <summary>Distinct values that always produce the same hash code.</summary>
+        private sealed record Colliding(string Name)
+        {
+            public override int GetHashCode() => 42;
+        }
+
+        [Fact]
+        public void Insert_DistinctValuesWithSameHash_AreAllStored()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(10);
+
+            tree.Insert(s, e, new Colliding("a"));
+            tree.Insert(s, e, new Colliding("b"));
+            tree.Insert(s, e, new Colliding("c"));
+
+            var values = tree.Query(s, e).Select(v => v.Name).OrderBy(x => x).ToList();
+            Assert.Equal(new[] { "a", "b", "c" }, values);
+            Assert.Equal(3, tree.CountInRange(s, e));
+        }
+
+        [Fact]
+        public void Remove_WithCollidingHash_RemovesOnlyMatchingValue()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(10);
+
+            for (int i = 0; i < 50; i++)
+                tree.Insert(s, e, new Colliding("v" + i));
+
+            Assert.True(tree.Remove(s, e, new Colliding("v25")));
+            Assert.False(tree.Remove(s, e, new Colliding("v25")));
+            Assert.False(tree.Remove(s, e, new Colliding("missing")));
+
+            var values = tree.Query(s, e).Select(v => v.Name).ToList();
+            Assert.Equal(49, values.Count);
+            Assert.DoesNotContain("v25", values);
+        }
+
+        [Fact]
+        public void Insert_ExactDuplicate_IsIgnored()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(1);
+
+            tree.Insert(s, e, new Colliding("x"));
+            tree.Insert(s, e, new Colliding("x"));
+
+            Assert.Single(tree.Query(s, e));
+        }
+
+        [Fact]
+        public void InsertAndRemove_NullValues_AreSupported()
+        {
+            var tree = new TemporalIntervalTree<string?>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(1);
+
+            tree.Insert(s, e, null);
+            tree.Insert(s, e, null);
+            Assert.Single(tree.Query(s, e));
+            Assert.True(tree.Remove(s, e, null));
+            Assert.Empty(tree.Query(s, e));
+        }
     }
 }

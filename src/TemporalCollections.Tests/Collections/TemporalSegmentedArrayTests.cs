@@ -271,5 +271,36 @@ namespace TemporalCollections.Tests.Collections
             var arr = col.ToArray();
             AssertStrictlyIncreasing(arr); // TemporalItem<T>.Create ensures monotonic UTC ticks per T
         }
+
+        [Fact]
+        public void Add_AfterTrimExcess_DoesNotThrow_AndKeepsOrder()
+        {
+            var col = new TemporalSegmentedArray<int>(segmentCapacity: 8);
+            for (int i = 0; i < 3; i++) col.AddValue(i);
+
+            col.TrimExcess(); // shrinks the last segment to Count (3)
+
+            for (int i = 3; i < 20; i++) col.AddValue(i);
+
+            var arr = col.ToArray();
+            Assert.Equal(20, arr.Length);
+            Assert.Equal(Enumerable.Range(0, 20), arr.Select(x => x.Value));
+            AssertStrictlyIncreasing(arr);
+        }
+
+        [Fact]
+        public void AddOutOfOrder_AfterTrimExcess_DoesNotThrow()
+        {
+            var col = new TemporalSegmentedArray<int>(segmentCapacity: 8);
+            var a = col.AddValue(1);
+            col.AddValue(2);
+            col.AddValue(3);
+            col.TrimExcess();
+
+            // Positional insert into a trimmed segment
+            col.Add(new TemporalItem<int>(0, a.Timestamp.AddTicks(-1)));
+
+            Assert.Equal(new[] { 0, 1, 2, 3 }, col.ToArray().Select(x => x.Value));
+        }
     }
 }

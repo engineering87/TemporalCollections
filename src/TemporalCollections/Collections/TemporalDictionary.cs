@@ -41,9 +41,7 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Add(TKey key, TValue value)
         {
-            var temporalItem = TemporalItem<TValue>.Create(value, _timeProvider);
-
-            // Retry loop: if a concurrent RemoveOlderThan/RemoveRange removes the key
+            // Retry loop
             // between GetOrAdd and lock(list), the list becomes orphaned. We detect this
             // by verifying the list is still the one in the dictionary after acquiring the lock.
             while (true)
@@ -64,6 +62,9 @@ namespace TemporalCollections.Collections
                         //
                         // Therefore, we can safely append to the end of the list while preserving
                         // the sorted-by-timestamp invariant. No BinarySearch + Insert is needed.
+                        // The item is created under the per-key lock so concurrent Adds on the
+                        // same key cannot append out of timestamp order.
+                        var temporalItem = TemporalItem<TValue>.Create(value, _timeProvider);
                         list.Add(temporalItem);
                         return;
                     }
@@ -122,7 +123,8 @@ namespace TemporalCollections.Collections
                         list.RemoveRange(0, idx);
 
                     if (list.Count == 0)
-                        _dict.TryRemove(kvp.Key, out _);
+                        // Remove only if the key still maps to this list (a concurrent Add may have replaced it).
+                        _dict.TryRemove(new KeyValuePair<TKey, List<TemporalItem<TValue>>>(kvp.Key, list));
                 }
             }
         }
@@ -267,7 +269,7 @@ namespace TemporalCollections.Collections
                         list.RemoveRange(lo, removeCount);
 
                     if (list.Count == 0)
-                        _dict.TryRemove(kvp.Key, out _);
+                        _dict.TryRemove(new KeyValuePair<TKey, List<TemporalItem<TValue>>>(kvp.Key, list));
                 }
             }
         }

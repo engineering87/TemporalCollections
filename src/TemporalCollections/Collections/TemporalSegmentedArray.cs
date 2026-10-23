@@ -231,7 +231,8 @@ namespace TemporalCollections.Collections
 
                 var last = _segments[^1];
                 long t = item.Timestamp.UtcTicks;
-                if (last.Count < _segmentCapacity && (last.Count == 0 || last.MaxTicks <= t))
+                EnsureCapacity(last);
+                if (!last.IsFull && (last.Count == 0 || last.MaxTicks <= t))
                 {
                     last.Append(item);
                     _count++;
@@ -288,7 +289,8 @@ namespace TemporalCollections.Collections
                     }
                     var last = _segments[^1];
                     long t = it.Timestamp.UtcTicks;
-                    if (last.Count < _segmentCapacity && (last.Count == 0 || last.MaxTicks <= t))
+                    EnsureCapacity(last);
+                    if (!last.IsFull && (last.Count == 0 || last.MaxTicks <= t))
                     {
                         last.Append(it);
                         _count++;
@@ -699,6 +701,7 @@ namespace TemporalCollections.Collections
         private void InsertAt(int segIdx, int elemIdx, in TemporalItem<T> item)
         {
             var seg = _segments[segIdx];
+            EnsureCapacity(seg);
             if (!seg.IsFull)
             {
                 seg.InsertAt(elemIdx, item);
@@ -728,6 +731,15 @@ namespace TemporalCollections.Collections
                 seg.InsertAt(elemIdx, item);
             else
                 right.InsertAt(elemIdx - seg.Count, item);
+        }
+
+        /// <summary>
+        /// Restores a segment's backing array to the configured capacity if it was shrunk by <see cref="TrimExcess"/>.
+        /// </summary>
+        private void EnsureCapacity(Segment seg)
+        {
+            if (seg.Items.Length < _segmentCapacity)
+                Array.Resize(ref seg.Items, _segmentCapacity);
         }
         #endregion
     }

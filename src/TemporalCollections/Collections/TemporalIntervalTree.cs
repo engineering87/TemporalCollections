@@ -35,7 +35,17 @@ namespace TemporalCollections.Collections
             public T Value = default!;
 
             /// <summary>
-            /// The maximum End of this node or any of its descendants (UTC).
+            /// Cached hash of <see cref="Value"/> (ordering key component).
+            /// </summary>
+            public readonly int Hash;
+
+            /// <summary>
+            /// Unique insertion sequence; final tie-break for distinct values sharing the same hash.
+            /// </summary>
+            public readonly long Seq;
+
+            /// <summary>
+            /// The maximum End
             /// </summary>
             public DateTimeOffset MaxEnd;
 
@@ -47,7 +57,7 @@ namespace TemporalCollections.Collections
             public Node? Left;
             public Node? Right;
 
-            public Node(DateTimeOffset start, DateTimeOffset end, T value, int priority)
+            public Node(DateTimeOffset start, DateTimeOffset end, T value, int hash, long seq, int priority)
             {
                 if (end < start)
                     throw new ArgumentException("End must be >= Start", nameof(end));
@@ -55,6 +65,8 @@ namespace TemporalCollections.Collections
                 Start = start;
                 End = end;
                 Value = value;
+                Hash = hash;
+                Seq = seq;
                 Priority = priority;
                 MaxEnd = end;
             }
@@ -63,6 +75,7 @@ namespace TemporalCollections.Collections
         private Node? _root;
         private readonly Lock _lock = new();
         private readonly Random _rng = new(); // used only under _lock
+        private long _seq; // used only under _lock
 
         /// <summary>
         /// Inserts a new interval with an associated value into the tree.
@@ -76,7 +89,13 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                _root = InsertTreap(_root, s, e, value);
+                int h = HashOf(value);
+
+                // Exact duplicate (Start, End, Value): no-op.
+                if (FindNode(_root, s, e, h, value) is not null)
+                    return;
+
+                _root = InsertTreap(_root, s, e, value, h, ++_seq);
             }
         }
 
@@ -90,8 +109,12 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
+                var target = FindNode(_root, s, e, HashOf(value), value);
+                if (target is null)
+                    return false;
+
                 bool removed;
-                (_root, removed) = RemoveTreap(_root, s, e, value);
+                (_root, removed) = RemoveTreap(_root, target.Start, target.End, target.Hash, target.Seq);
                 return removed;
             }
         }
@@ -308,22 +331,49 @@ namespace TemporalCollections.Collections
 
         #region Internal helpers (UTC DateTimeOffset, Treap)
 
+        private static int HashOf(T value)
+            => value is null ? 0 : EqualityComparer<T>.Default.GetHashCode(value);
+
         /// <summary>
-        /// Total order over (Start, End, Value) to avoid long equal-key chains.
+        /// Compares (Start, End, Hash) only; nodes sharing this prefix form a contiguous in-order group.
         /// </summary>
-        private static int CompareKey(DateTimeOffset s1, DateTimeOffset e1, T v1,
-                                      DateTimeOffset s2, DateTimeOffset e2, T v2)
+        private static int ComparePrefix(DateTimeOffset s1, DateTimeOffset e1, int h1, Node n)
         {
-            int c = s1.CompareTo(s2);
+            int c = s1.CompareTo(n.Start);
             if (c != 0) return c;
-            c = e1.CompareTo(e2);
+            c = e1.CompareTo(n.End);
             if (c != 0) return c;
+            return h1.CompareTo(n.Hash);
+        }
 
-            if (EqualityComparer<T>.Default.Equals(v1, v2)) return 0;
+        /// <summary>
+        /// Total order over (Start, End, Hash, Seq). Seq is unique, so distinct values
+        /// with colliding hashes never compare equal.
+        /// </summary>
+        private static int CompareKey(DateTimeOffset s1, DateTimeOffset e1, int h1, long q1, Node n)
+        {
+            int c = ComparePrefix(s1, e1, h1, n);
+            return c != 0 ? c : q1.CompareTo(n.Seq);
+        }
 
-            int h1 = HashCode.Combine(v1);
-            int h2 = HashCode.Combine(v2);
-            return h1 < h2 ? -1 : (h1 > h2 ? 1 : 0);
+        /// <summary>
+        /// Finds a node with exactly (start, end, value), scanning the group of nodes sharing the same hash.
+        /// </summary>
+        private static Node? FindNode(Node? node, DateTimeOffset start, DateTimeOffset end, int hash, T value)
+        {
+            while (node is not null)
+            {
+                int c = ComparePrefix(start, end, hash, node);
+                if (c < 0) { node = node.Left; continue; }
+                if (c > 0) { node = node.Right; continue; }
+
+                if (EqualityComparer<T>.Default.Equals(value, node.Value))
+                    return node;
+
+                return FindNode(node.Left, start, end, hash, value)
+                    ?? FindNode(node.Right, start, end, hash, value);
+            }
+            return null;
         }
 
         /// <summary>
@@ -366,29 +416,25 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Treap insert with priority heap property (min-heap).
         /// </summary>
-        private Node InsertTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        private Node InsertTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value, int hash, long seq)
         {
             if (node is null)
-                return new Node(start, end, value, _rng.Next());
+                return new Node(start, end, value, hash, seq, _rng.Next());
 
-            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
+            // Seq is unique, so cmp is never 0.
+            int cmp = CompareKey(start, end, hash, seq, node);
 
             if (cmp < 0)
             {
-                node.Left = InsertTreap(node.Left, start, end, value);
+                node.Left = InsertTreap(node.Left, start, end, value, hash, seq);
                 if (node.Left!.Priority < node.Priority)
                     node = RotateRight(node);
             }
-            else if (cmp > 0)
-            {
-                node.Right = InsertTreap(node.Right, start, end, value);
-                if (node.Right!.Priority < node.Priority)
-                    node = RotateLeft(node);
-            }
             else
             {
-                // Exact duplicate (Start, End, Value): no-op.
-                return node;
+                node.Right = InsertTreap(node.Right, start, end, value, hash, seq);
+                if (node.Right!.Priority < node.Priority)
+                    node = RotateLeft(node);
             }
 
             Update(node);
@@ -399,20 +445,20 @@ namespace TemporalCollections.Collections
         /// Removes a node matching (start, end, value) using treap deletion:
         /// rotate the node down according to child priorities until it becomes a leaf, then drop it.
         /// </summary>
-        private static (Node? node, bool removed) RemoveTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        private static (Node? node, bool removed) RemoveTreap(Node? node, DateTimeOffset start, DateTimeOffset end, int hash, long seq)
         {
             if (node is null) return (null, false);
 
-            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
+            int cmp = CompareKey(start, end, hash, seq, node);
 
             bool removed;
             if (cmp < 0)
             {
-                (node.Left, removed) = RemoveTreap(node.Left, start, end, value);
+                (node.Left, removed) = RemoveTreap(node.Left, start, end, hash, seq);
             }
             else if (cmp > 0)
             {
-                (node.Right, removed) = RemoveTreap(node.Right, start, end, value);
+                (node.Right, removed) = RemoveTreap(node.Right, start, end, hash, seq);
             }
             else
             {

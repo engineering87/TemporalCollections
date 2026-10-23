@@ -50,9 +50,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Enqueue(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
             lock (_lock)
             {
+                // Timestamp is created under the lock so that FIFO order matches timestamp order.
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
                 _queue.Enqueue(temporalItem);
             }
         }

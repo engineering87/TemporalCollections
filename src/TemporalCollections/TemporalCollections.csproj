@@ -16,7 +16,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageTags>temporal;collections;time-series;thread-safe;dictionary;queue;stack;dotnet</PackageTags>
-    <PackageReleaseNotes>Performance improvements: binary-search-based range queries in TemporalDictionary; TryDequeue/TryPeek added to TemporalQueue.</PackageReleaseNotes>
+    <PackageReleaseNotes>Performance improvements: binary-search-based range queries in TemporalDictionary; TryDequeue/TryPeek added to TemporalQueue. Bug fixes: TemporalIntervalTree no longer drops or mis-removes distinct values with colliding hash codes; TemporalCircularBuffer.Add, TemporalQueue.Enqueue, TemporalDictionary.Add and TemporalMultimap.AddValue now guarantee chronological order under concurrent writers; TemporalSegmentedArray no longer throws when adding after TrimExcess; TemporalDictionary pruning no longer removes a key re-created concurrently.</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
