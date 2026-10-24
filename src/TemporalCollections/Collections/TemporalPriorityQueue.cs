@@ -391,7 +391,7 @@ namespace TemporalCollections.Collections
             {
                 if (other is null) return 1;
 
-                int c = Priority.CompareTo(other.Priority);
+                int c = Comparer<TPriority>.Default.Compare(Priority, other.Priority);
                 if (c != 0) return c;
 
                 c = Timestamp.CompareTo(other.Timestamp);

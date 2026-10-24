@@ -600,5 +600,19 @@ namespace TemporalCollections.Tests.Collections
             var seen = new HashSet<int>(all.Select(x => x.Value));
             Assert.Equal(2000, seen.Count);
         }
+
+        [Fact]
+        public void Enqueue_NullPriority_DoesNotThrow_AndSortsFirst()
+        {
+            var pq = new TemporalPriorityQueue<string, int>();
+            pq.Enqueue(1, "b");
+            pq.Enqueue(2, null!);
+            pq.Enqueue(3, "a");
+
+            Assert.True(pq.TryDequeue(out var first));
+            Assert.Equal(2, first);
+            Assert.True(pq.TryDequeue(out var second));
+            Assert.Equal(3, second);
+        }
     }
 }
