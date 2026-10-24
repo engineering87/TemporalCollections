@@ -165,23 +165,32 @@ namespace TemporalCollections.Tests.Collections
             AssertStrictlyIncreasing(all);
         }
 
-        [Fact(DisplayName = "GetNearest returns nearest by ticks; in tie it prefers the earlier item")]
-        public void GetNearest_TiePrefersEarlier()
+        [Fact(DisplayName = "GetNearest returns nearest by ticks; in tie it prefers the later item (>= time)")]
+        public void GetNearest_TiePrefersLater()
         {
             var col = new TemporalSegmentedArray<int>(segmentCapacity: 3);
             var items = AddValues(col, 100, 200, 300);
 
-            // Midpoint between items[1] and items[2] → tie, expect earlier (items[1])
+            // Midpoint between items[1] and items[2]
             var mid = Mid(items[1].Timestamp, items[2].Timestamp);
             var nearest = col.GetNearest(mid);
             Assert.NotNull(nearest);
-            Assert.Equal(200, nearest!.Value);
 
-            // Midpoint between items[0] and items[1] → earlier (items[0])
+            long dBefore = Math.Abs(mid.UtcTicks - items[1].Timestamp.UtcTicks);
+            long dAfter = Math.Abs(items[2].Timestamp.UtcTicks - mid.UtcTicks);
+            // If true tie, prefer later; otherwise prefer closer
+            int expected1 = (dAfter <= dBefore) ? 300 : 200;
+            Assert.Equal(expected1, nearest!.Value);
+
+            // Midpoint between items[0] and items[1]
             var mid2 = Mid(items[0].Timestamp, items[1].Timestamp);
             nearest = col.GetNearest(mid2);
             Assert.NotNull(nearest);
-            Assert.Equal(100, nearest!.Value);
+
+            long dBefore2 = Math.Abs(mid2.UtcTicks - items[0].Timestamp.UtcTicks);
+            long dAfter2 = Math.Abs(items[1].Timestamp.UtcTicks - mid2.UtcTicks);
+            int expected2 = (dAfter2 <= dBefore2) ? 200 : 100;
+            Assert.Equal(expected2, nearest!.Value);
         }
 
         [Fact(DisplayName = "GetLatest and GetEarliest return correct items")]
@@ -261,6 +270,37 @@ namespace TemporalCollections.Tests.Collections
 
             var arr = col.ToArray();
             AssertStrictlyIncreasing(arr); // TemporalItem<T>.Create ensures monotonic UTC ticks per T
+        }
+
+        [Fact]
+        public void Add_AfterTrimExcess_DoesNotThrow_AndKeepsOrder()
+        {
+            var col = new TemporalSegmentedArray<int>(segmentCapacity: 8);
+            for (int i = 0; i < 3; i++) col.AddValue(i);
+
+            col.TrimExcess(); // shrinks the last segment to Count (3)
+
+            for (int i = 3; i < 20; i++) col.AddValue(i);
+
+            var arr = col.ToArray();
+            Assert.Equal(20, arr.Length);
+            Assert.Equal(Enumerable.Range(0, 20), arr.Select(x => x.Value));
+            AssertStrictlyIncreasing(arr);
+        }
+
+        [Fact]
+        public void AddOutOfOrder_AfterTrimExcess_DoesNotThrow()
+        {
+            var col = new TemporalSegmentedArray<int>(segmentCapacity: 8);
+            var a = col.AddValue(1);
+            col.AddValue(2);
+            col.AddValue(3);
+            col.TrimExcess();
+
+            // Positional insert into a trimmed segment
+            col.Add(new TemporalItem<int>(0, a.Timestamp.AddTicks(-1)));
+
+            Assert.Equal(new[] { 0, 1, 2, 3 }, col.ToArray().Select(x => x.Value));
         }
     }
 }

@@ -84,7 +84,11 @@ namespace TemporalCollections.Collections
                 if (removeCount <= 0) return;
                 int tail = Count - (start + removeCount);
                 if (tail > 0) Array.Copy(Items, start + removeCount, Items, start, tail);
-                Count -= removeCount;
+                int newCount = Count - removeCount;
+                // Clear the now-stale tail so we don't keep references to removed items
+                // alive (matters for reference T to allow GC).
+                Array.Clear(Items, newCount, Count - newCount);
+                Count = newCount;
                 if (Count == 0)
                 {
                     MinTicks = long.MaxValue;
@@ -144,11 +148,26 @@ namespace TemporalCollections.Collections
         /// </summary>
         /// <param name="segmentCapacity">Maximum number of items per segment; must be &gt; 0.</param>
         public TemporalSegmentedArray(int segmentCapacity = DefaultSegmentCapacity)
+            : this(TimeProvider.System, segmentCapacity)
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(segmentCapacity);
+        }
 
+        /// <summary>
+        /// Initializes a new <see cref="TemporalSegmentedArray{T}"/> using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        /// <param name="timeProvider">Clock used to timestamp items.</param>
+        /// <param name="segmentCapacity">Maximum number of items per segment; must be &gt; 0.</param>
+        public TemporalSegmentedArray(TimeProvider timeProvider, int segmentCapacity = DefaultSegmentCapacity)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            if (segmentCapacity < 2)
+                throw new ArgumentOutOfRangeException(nameof(segmentCapacity), "Segment capacity must be at least 2.");
+
+            _timeProvider = timeProvider;
             _segmentCapacity = segmentCapacity;
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Gets the total number of items currently stored.
@@ -212,7 +231,8 @@ namespace TemporalCollections.Collections
 
                 var last = _segments[^1];
                 long t = item.Timestamp.UtcTicks;
-                if (last.Count < _segmentCapacity && (last.Count == 0 || last.MaxTicks <= t))
+                EnsureCapacity(last);
+                if (!last.IsFull && (last.Count == 0 || last.MaxTicks <= t))
                 {
                     last.Append(item);
                     _count++;
@@ -232,7 +252,7 @@ namespace TemporalCollections.Collections
         /// <returns>The created <see cref="TemporalItem{T}"/>.</returns>
         public TemporalItem<T> AddValue(T value)
         {
-            var it = TemporalItem<T>.Create(value);
+            var it = TemporalItem<T>.Create(value, _timeProvider);
             Add(it);
             return it;
         }
@@ -269,7 +289,8 @@ namespace TemporalCollections.Collections
                     }
                     var last = _segments[^1];
                     long t = it.Timestamp.UtcTicks;
-                    if (last.Count < _segmentCapacity && (last.Count == 0 || last.MaxTicks <= t))
+                    EnsureCapacity(last);
+                    if (!last.IsFull && (last.Count == 0 || last.MaxTicks <= t))
                     {
                         last.Append(it);
                         _count++;
@@ -450,7 +471,7 @@ namespace TemporalCollections.Collections
                     return [];
                 long c = time.UtcTicks;
                 var list = new List<TemporalItem<T>>();
-                int sIdx = FirstSegWithMaxGte(c + 1);
+                int sIdx = FirstSegWithMaxGt(c);
                 if (sIdx < 0) 
                     return [];
                 for (int s = sIdx; s < _segments.Count; s++)
@@ -514,7 +535,8 @@ namespace TemporalCollections.Collections
                     return candBefore;
                 long dPrev = Math.Abs(x - candBefore.Timestamp.UtcTicks);
                 long dNext = Math.Abs(candAfter.Timestamp.UtcTicks - x);
-                return (dPrev <= dNext) ? candBefore : candAfter;
+                // Tie-break: prefer the later item (>= time)
+                return (dNext <= dPrev) ? candAfter : candBefore;
             }
         }
 
@@ -633,6 +655,29 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
+        /// Finds the first segment whose <c>MaxTicks</c> is strictly greater than <paramref name="ticks"/>.
+        /// Equivalent to <see cref="FirstSegWithMaxGte(long)"/> with <c>ticks + 1</c>, but overflow-safe
+        /// for the corner case where <paramref name="ticks"/> is <see cref="long.MaxValue"/>.
+        /// </summary>
+        /// <param name="ticks">Target UTC ticks.</param>
+        /// <returns>Segment index; -1 if no segment satisfies the condition.</returns>
+        private int FirstSegWithMaxGt(long ticks)
+        {
+            int lo = 0, hi = _segments.Count - 1;
+            if (hi < 0)
+                return -1;
+            if (_segments[hi].MaxTicks <= ticks)
+                return -1;
+            while (lo < hi)
+            {
+                int mid = lo + ((hi - lo) >> 1);
+                if (_segments[mid].MaxTicks <= ticks)
+                    lo = mid + 1; else hi = mid;
+            }
+            return lo;
+        }
+
+        /// <summary>
         /// Global lower bound: first position whose timestamp ticks is greater than or equal to <paramref name="ticks"/>.
         /// </summary>
         /// <param name="ticks">UTC ticks to locate.</param>
@@ -656,6 +701,7 @@ namespace TemporalCollections.Collections
         private void InsertAt(int segIdx, int elemIdx, in TemporalItem<T> item)
         {
             var seg = _segments[segIdx];
+            EnsureCapacity(seg);
             if (!seg.IsFull)
             {
                 seg.InsertAt(elemIdx, item);
@@ -671,7 +717,8 @@ namespace TemporalCollections.Collections
             right.MinTicks = right.Items[0].Timestamp.UtcTicks;
             right.MaxTicks = right.Items[move - 1].Timestamp.UtcTicks;
 
-            // Shrink left segment
+            // Shrink left segment (clear the moved slots so we don't pin removed values).
+            Array.Clear(seg.Items, startMove, move);
             seg.Count = startMove;
             seg.MinTicks = seg.Items[0].Timestamp.UtcTicks;
             seg.MaxTicks = seg.Items[seg.Count - 1].Timestamp.UtcTicks;
@@ -684,6 +731,15 @@ namespace TemporalCollections.Collections
                 seg.InsertAt(elemIdx, item);
             else
                 right.InsertAt(elemIdx - seg.Count, item);
+        }
+
+        /// <summary>
+        /// Restores a segment's backing array to the configured capacity if it was shrunk by <see cref="TrimExcess"/>.
+        /// </summary>
+        private void EnsureCapacity(Segment seg)
+        {
+            if (seg.Items.Length < _segmentCapacity)
+                Array.Resize(ref seg.Items, _segmentCapacity);
         }
         #endregion
     }

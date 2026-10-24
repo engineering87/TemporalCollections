@@ -22,16 +22,30 @@ namespace TemporalCollections.Collections
         /// </summary>
         /// <param name="comparer">Equality comparer for items; defaults to <see cref="EqualityComparer{T}.Default"/>.</param>
         public TemporalSet(IEqualityComparer<T>? comparer = null)
+            : this(TimeProvider.System, comparer)
         {
+        }
+
+        /// <summary>
+        /// Creates a new temporal set using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        /// <param name="timeProvider">Clock used to timestamp items.</param>
+        /// <param name="comparer">Equality comparer for items; defaults to <see cref="EqualityComparer{T}.Default"/>.</param>
+        public TemporalSet(TimeProvider timeProvider, IEqualityComparer<T>? comparer = null)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
             _dict = new ConcurrentDictionary<T, TemporalItem<T>>(comparer ?? EqualityComparer<T>.Default);
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Adds an item to the set with the current timestamp if not already present.
         /// </summary>
         public bool Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item); // Timestamp is DateTimeOffset UTC (monotonic)
+            var temporalItem = TemporalItem<T>.Create(item, _timeProvider); // Timestamp
             return _dict.TryAdd(item, temporalItem);
         }
 
@@ -71,7 +85,10 @@ namespace TemporalCollections.Collections
             {
                 if (kv.Value.Timestamp.UtcTicks < c)
                 {
-                    _dict.TryRemove(kv.Key, out _);
+                    // Atomic conditional remove: only delete if the value is still the one observed,
+                    // preventing the removal of a fresh re-Add (with a newer timestamp) that occurred
+                    // between the timestamp check and the TryRemove call.
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kv);
                 }
             }
         }
@@ -145,7 +162,10 @@ namespace TemporalCollections.Collections
             {
                 long x = kv.Value.Timestamp.UtcTicks;
                 if (f <= x && x <= t)
-                    _dict.TryRemove(kv.Key, out _);
+                {
+                    // Atomic conditional remove (see RemoveOlderThan).
+                    ((ICollection<KeyValuePair<T, TemporalItem<T>>>)_dict).Remove(kv);
+                }
             }
         }
 

@@ -15,16 +15,52 @@ namespace TemporalCollections.Collections
     {
         private readonly List<TemporalItem<T>> _items = [];
         private readonly Lock _lock = new();
+        private readonly TimeProvider _timeProvider;
+
+        /// <summary>
+        /// Initializes a new sorted list using the system clock for timestamps.
+        /// </summary>
+        public TemporalSortedList() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new sorted list using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalSortedList(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Adds a new item to the list while preserving chronological order.
         /// </summary>
+        /// <remarks>
+        /// The timestamp is generated INSIDE the lock so that "tick creation" and "list append"
+        /// are serialized together. This guarantees the fast-path (last item's ticks &lt;= new item's
+        /// ticks) reflects a real chronological ordering and never degrades to the defensive
+        /// <see cref="List{T}.BinarySearch(T, IComparer{T})"/> fallback because of a thread-scheduling
+        /// reorder between Create and Add.
+        /// </remarks>
         public void Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item);
             lock (_lock)
             {
-                // Binary search to find insertion index using the item's comparer (by DateTimeOffset)
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
+
+                // Fast-path: TemporalItem<T>.Create guarantees strictly increasing UTC ticks
+                // globally per closed generic type, so a new item is virtually always >= the
+                // last one in this list. Skip the O(log n) binary search and append in O(1).
+                int n = _items.Count;
+                if (n == 0 || _items[n - 1].Timestamp.UtcTicks <= temporalItem.Timestamp.UtcTicks)
+                {
+                    _items.Add(temporalItem);
+                    return;
+                }
+
+                // Defensive fallback: preserve sorted invariant if a caller-provided item
+                // (e.g., via future overloads/derivatives) ever arrives out of order.
                 int index = _items.BinarySearch(temporalItem, TemporalItem<T>.TimestampComparer);
                 if (index < 0) index = ~index;
                 _items.Insert(index, temporalItem);

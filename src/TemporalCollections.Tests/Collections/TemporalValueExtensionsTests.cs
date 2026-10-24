@@ -15,6 +15,18 @@ namespace TemporalCollections.Tests.Collections
             return q;
         }
 
+        private static TemporalQueue<int> MakeSpacedIntQueue(params int[] values)
+        {
+            var q = new TemporalQueue<int>();
+            foreach (var v in values)
+            {
+                q.Enqueue(v);
+                Thread.Sleep(2);
+            }
+
+            return q;
+        }
+
         [Fact]
         public void ToValueList_ReturnsAllValuesInChronologicalOrder()
         {
@@ -113,6 +125,143 @@ namespace TemporalCollections.Tests.Collections
             Assert.NotNull(asCollection);
             Assert.True(asCollection!.IsReadOnly);
             Assert.Throws<NotSupportedException>(() => asCollection.Add(42));
+        }
+
+        [Fact]
+        public void GetAtOrBefore_And_GetAtOrAfter_ReturnInclusiveDirectionalMatches()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            var exactMiddle = items[1].Timestamp;
+            var betweenMiddleAndLast = exactMiddle.AddMilliseconds(1);
+
+            Assert.Equal(20, source.GetAtOrBefore(exactMiddle)!.Value);
+            Assert.Equal(20, source.GetAtOrAfter(exactMiddle)!.Value);
+            Assert.Equal(20, source.GetAtOrBefore(betweenMiddleAndLast)!.Value);
+            Assert.Equal(30, source.GetAtOrAfter(betweenMiddleAndLast)!.Value);
+            Assert.Null(source.GetAtOrBefore(items[0].Timestamp.AddMilliseconds(-1)));
+            Assert.Null(source.GetAtOrAfter(items[^1].Timestamp.AddMilliseconds(1)));
+        }
+
+        [Fact]
+        public void GetAtOrBefore_And_GetAtOrAfter_WorkWithDateTimeOverloads()
+        {
+            var source = MakeSpacedIntQueue(1, 2, 3);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp.UtcDateTime;
+
+            Assert.Equal(2, source.GetAtOrBefore(exactMiddle)!.Value);
+            Assert.Equal(2, source.GetAtOrAfter(exactMiddle)!.Value);
+        }
+
+        [Fact]
+        public void GetAtOrBefore_And_GetAtOrAfter_WorkForTemporalDictionaryValues()
+        {
+            var source = new TemporalDictionary<string, int>();
+            source.Add("a", 100);
+            Thread.Sleep(2);
+            source.Add("b", 200);
+            Thread.Sleep(2);
+            source.Add("c", 300);
+
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp;
+
+            Assert.Equal("b", source.GetAtOrBefore(exactMiddle)!.Value.Key);
+            Assert.Equal(200, source.GetAtOrBefore(exactMiddle)!.Value.Value);
+            Assert.Equal("b", source.GetAtOrAfter(exactMiddle)!.Value.Key);
+            Assert.Equal(200, source.GetAtOrAfter(exactMiddle)!.Value.Value);
+        }
+
+        [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_ReturnTrueAndMatchedItem()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp;
+            var betweenMiddleAndLast = exactMiddle.AddMilliseconds(1);
+
+            var foundBefore = source.TryGetAtOrBefore(betweenMiddleAndLast, out var beforeItem);
+            var foundAfter = source.TryGetAtOrAfter(betweenMiddleAndLast, out var afterItem);
+
+            Assert.True(foundBefore);
+            Assert.NotNull(beforeItem);
+            Assert.Equal(20, beforeItem!.Value);
+            Assert.True(foundAfter);
+            Assert.NotNull(afterItem);
+            Assert.Equal(30, afterItem!.Value);
+        }
+
+        [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_ReturnFalseAndNullWhenNoMatchExists()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+
+            var foundBefore = source.TryGetAtOrBefore(items[0].Timestamp.AddMilliseconds(-1), out var beforeItem);
+            var foundAfter = source.TryGetAtOrAfter(items[^1].Timestamp.AddMilliseconds(1), out var afterItem);
+
+            Assert.False(foundBefore);
+            Assert.Null(beforeItem);
+            Assert.False(foundAfter);
+            Assert.Null(afterItem);
+        }
+
+        [Fact]
+        public void TryGetAtOrBefore_And_TryGetAtOrAfter_WorkWithDateTimeOverloads()
+        {
+            var source = MakeSpacedIntQueue(1, 2, 3);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var exactMiddle = items[1].Timestamp.UtcDateTime;
+
+            Assert.True(source.TryGetAtOrBefore(exactMiddle, out var beforeItem));
+            Assert.NotNull(beforeItem);
+            Assert.Equal(2, beforeItem!.Value);
+            Assert.True(source.TryGetAtOrAfter(exactMiddle, out var afterItem));
+            Assert.NotNull(afterItem);
+            Assert.Equal(2, afterItem!.Value);
+        }
+
+        [Fact]
+        public void CountBefore_And_CountAfter_ReturnExpectedExclusiveCounts()
+        {
+            var source = MakeSpacedIntQueue(10, 20, 30);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
+            Assert.Equal(0, source.CountBefore(items[0].Timestamp));
+            Assert.Equal(0, source.CountAfter(items[^1].Timestamp));
+        }
+
+        [Fact]
+        public void CountBefore_And_CountAfter_WorkWithDateTimeOverloads()
+        {
+            var source = MakeSpacedIntQueue(1, 2, 3);
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp.UtcDateTime;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
+        }
+
+        [Fact]
+        public void CountBefore_And_CountAfter_WorkForTemporalDictionaryValues()
+        {
+            var source = new TemporalDictionary<string, int>();
+            source.Add("a", 100);
+            Thread.Sleep(2);
+            source.Add("b", 200);
+            Thread.Sleep(2);
+            source.Add("c", 300);
+
+            var items = source.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var split = items[1].Timestamp;
+
+            Assert.Equal(1, source.CountBefore(split));
+            Assert.Equal(1, source.CountAfter(split));
         }
 
         [Fact]

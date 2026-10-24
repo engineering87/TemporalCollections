@@ -30,7 +30,7 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
         public int KeyCount { get; set; }
 
         /// <summary>Number of values per key.</summary>
-        [Params(1_000)]
+        [Params(500)]
         public int ValuesPerKey { get; set; }
 
         // ---------- Prepared data ----------

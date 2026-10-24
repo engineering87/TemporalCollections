@@ -496,5 +496,215 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal("C", nearCeil!.Value);
             }
         }
+
+        [Fact]
+        public void GetInRange_WhenFromIsGreaterThanTo_ShouldSwapBounds()
+        {
+            var stack = new TemporalStack<int>();
+            stack.Push(1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+
+            // normal
+            var normal = stack.GetInRange(t1, t2).Select(x => x.Value).ToList();
+            // swapped
+            var swapped = stack.GetInRange(t2, t1).Select(x => x.Value).ToList();
+
+            Assert.Equal(normal, swapped);
+        }
+
+        [Fact]
+        public void CountInRange_WhenFromIsGreaterThanTo_ShouldSwapBounds()
+        {
+            var stack = new TemporalStack<int>();
+            stack.Push(1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+
+            var a = stack.CountInRange(t1, t2);
+            var b = stack.CountInRange(t2, t1);
+
+            Assert.Equal(a, b);
+        }
+
+        [Fact]
+        public void RemoveRange_WhenFromIsGreaterThanTo_ShouldSwapBounds()
+        {
+            var stack = new TemporalStack<int>();
+            stack.Push(1);
+            Thread.Sleep(2);
+            var t1 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var t2 = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+
+            // Remove item "2" by range [t1, t2] (or swapped)
+            stack.RemoveRange(t2, t1);
+
+            var remaining = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.Contains(1, remaining);
+            Assert.Contains(3, remaining);
+            Assert.DoesNotContain(2, remaining);
+        }
+
+        [Fact]
+        public void GetNearest_WhenTimeIsBeforeEarliest_ShouldReturnEarliest()
+        {
+            var stack = new TemporalStack<string>();
+            stack.Push("A");
+            Thread.Sleep(2);
+            stack.Push("B");
+
+            var earliest = stack.GetEarliest();
+            Assert.NotNull(earliest);
+
+            var beforeAll = earliest!.Timestamp.UtcDateTime.AddMinutes(-10);
+
+            var nearest = stack.GetNearest(beforeAll);
+
+            Assert.NotNull(nearest);
+            Assert.Equal(earliest.Value, nearest!.Value);
+            Assert.Equal(earliest.Timestamp, nearest.Timestamp);
+        }
+
+        [Fact]
+        public void GetNearest_WhenTimeIsAfterLatest_ShouldReturnLatest()
+        {
+            var stack = new TemporalStack<string>();
+            stack.Push("A");
+            Thread.Sleep(2);
+            stack.Push("B");
+
+            var latest = stack.GetLatest();
+            Assert.NotNull(latest);
+
+            var afterAll = latest!.Timestamp.UtcDateTime.AddMinutes(+10);
+
+            var nearest = stack.GetNearest(afterAll);
+
+            Assert.NotNull(nearest);
+            Assert.Equal(latest.Value, nearest!.Value);
+            Assert.Equal(latest.Timestamp, nearest.Timestamp);
+        }
+
+        [Fact]
+        public void GetBefore_And_GetAfter_ShouldReturnResultsSortedByAscendingTimestamp()
+        {
+            var stack = new TemporalStack<int>();
+            stack.Push(1);
+            Thread.Sleep(2);
+            stack.Push(2);
+            Thread.Sleep(2);
+            var split = DateTime.UtcNow;
+            Thread.Sleep(2);
+            stack.Push(3);
+            Thread.Sleep(2);
+            stack.Push(4);
+
+            var before = stack.GetBefore(split).ToList();
+            var after = stack.GetAfter(split).ToList();
+
+            static bool IsSortedAscending<T>(IReadOnlyList<TemporalCollections.Models.TemporalItem<T>> items)
+            {
+                for (int i = 1; i < items.Count; i++)
+                    if (items[i - 1].Timestamp.UtcTicks > items[i].Timestamp.UtcTicks)
+                        return false;
+                return true;
+            }
+
+            Assert.True(IsSortedAscending(before));
+            Assert.True(IsSortedAscending(after));
+        }
+
+        [Fact]
+        public void GetEarliest_And_GetLatest_ShouldUpdateAfterRemoveOlderThan()
+        {
+            var stack = new TemporalStack<string>();
+
+            stack.Push("old");
+            Thread.Sleep(5);
+            var cutoff = DateTime.UtcNow;
+            Thread.Sleep(5);
+            stack.Push("new1");
+            Thread.Sleep(5);
+            stack.Push("new2");
+
+            stack.RemoveOlderThan(cutoff);
+
+            var earliest = stack.GetEarliest();
+            var latest = stack.GetLatest();
+
+            Assert.NotNull(earliest);
+            Assert.NotNull(latest);
+
+            Assert.Equal("new1", earliest!.Value);
+            Assert.Equal("new2", latest!.Value);
+        }
+
+        [Fact]
+        public void Operations_OnEmptyStack_ShouldBeSafeForQueriesAndMutations()
+        {
+            var stack = new TemporalStack<int>();
+
+            // Query APIs should not throw and should return empty/zero/null
+            Assert.Empty(stack.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Empty(stack.GetBefore(DateTime.UtcNow));
+            Assert.Empty(stack.GetAfter(DateTime.UtcNow));
+            Assert.Equal(0, stack.CountInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Equal(0, stack.CountSince(DateTime.UtcNow));
+            Assert.Equal(TimeSpan.Zero, stack.GetTimeSpan());
+            Assert.Null(stack.GetEarliest());
+            Assert.Null(stack.GetLatest());
+            Assert.Null(stack.GetNearest(DateTime.UtcNow));
+
+            // Mutation APIs should not throw
+            stack.RemoveOlderThan(DateTime.UtcNow);
+            stack.RemoveRange(DateTime.MinValue, DateTime.MaxValue);
+            stack.Clear();
+        }
+
+        [Fact]
+        public void Concurrent_Reads_DuringPushes_ShouldNotThrow_AndCountShouldMatchAllItemsAtEnd()
+        {
+            var stack = new TemporalStack<int>();
+
+            var reader = Task.Run(() =>
+            {
+                // read a bunch while writers are pushing; should never throw
+                for (int i = 0; i < 2000; i++)
+                {
+                    _ = stack.Count;
+                    _ = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Count();
+                    _ = stack.GetEarliest();
+                    _ = stack.GetLatest();
+                }
+            });
+
+            Parallel.For(0, 1000, i => stack.Push(i));
+
+            reader.Wait();
+
+            var all = stack.GetInRange(DateTime.MinValue, DateTime.MaxValue).Select(x => x.Value).ToList();
+            Assert.Equal(1000, stack.Count);
+            Assert.Equal(1000, all.Count);
+
+            // no duplicates / no losses
+            Assert.Equal(1000, all.Distinct().Count());
+        }
     }
 }

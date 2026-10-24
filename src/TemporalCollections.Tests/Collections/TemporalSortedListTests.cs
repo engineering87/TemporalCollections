@@ -192,5 +192,291 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal(3, nearCeil!.Value);
             }
         }
+
+        [Fact]
+        public void GetInRange_WhenFromGreaterThanTo_SwapsAndReturnsSameResults()
+        {
+            var list = new TemporalSortedList<string>();
+            list.Add("a");
+            list.Add("b");
+            list.Add("c");
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.Equal(3, all.Count);
+
+            var min = all.First().Timestamp.UtcDateTime;
+            var max = all.Last().Timestamp.UtcDateTime;
+
+            var normal = list.GetInRange(min, max).Select(i => i.Value).ToList();
+            var swapped = list.GetInRange(max, min).Select(i => i.Value).ToList();
+
+            Assert.Equal(normal, swapped);
+        }
+
+        [Fact]
+        public void GetInRange_OnEmptyList_ReturnsEmpty()
+        {
+            var list = new TemporalSortedList<int>();
+            var items = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.Empty(items);
+        }
+
+        [Fact]
+        public void CountInRange_OnEmptyList_ReturnsZero()
+        {
+            var list = new TemporalSortedList<int>();
+            Assert.Equal(0, list.CountInRange(DateTime.MinValue, DateTime.MaxValue));
+        }
+
+        [Fact]
+        public void GetLatest_And_GetEarliest_OnEmptyList_ReturnNull()
+        {
+            var list = new TemporalSortedList<int>();
+            Assert.Null(list.GetLatest());
+            Assert.Null(list.GetEarliest());
+        }
+
+        [Fact]
+        public void GetLatest_And_GetEarliest_ReturnCorrectItems()
+        {
+            var list = new TemporalSortedList<string>();
+            list.Add("first");
+            list.Add("second");
+            list.Add("third");
+
+            var earliest = list.GetEarliest();
+            var latest = list.GetLatest();
+
+            Assert.NotNull(earliest);
+            Assert.NotNull(latest);
+
+            Assert.Equal("first", earliest!.Value);
+            Assert.Equal("third", latest!.Value);
+
+            Assert.True(earliest.Timestamp <= latest.Timestamp);
+        }
+
+        [Fact]
+        public void GetBefore_IsStrictlyBefore_Cutoff()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all.Single(i => i.Value == 2).Timestamp.UtcDateTime;
+
+            var before = list.GetBefore(t2).Select(i => i.Value).ToList();
+
+            Assert.Contains(1, before);
+            Assert.DoesNotContain(2, before); // Strictly before
+            Assert.DoesNotContain(3, before);
+        }
+
+        [Fact]
+        public void GetAfter_IsStrictlyAfter_Cutoff()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all.Single(i => i.Value == 2).Timestamp.UtcDateTime;
+
+            var after = list.GetAfter(t2).Select(i => i.Value).ToList();
+
+            Assert.Contains(3, after);
+            Assert.DoesNotContain(2, after); // Strictly after
+            Assert.DoesNotContain(1, after);
+        }
+
+        [Fact]
+        public void RemoveRange_RemovesInclusiveBounds()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+            list.Add(4);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all.Single(i => i.Value == 2).Timestamp.UtcDateTime;
+            var t3 = all.Single(i => i.Value == 3).Timestamp.UtcDateTime;
+
+            // Remove [2,3] inclusive
+            list.RemoveRange(t2, t3);
+
+            var remaining = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                                .Select(i => i.Value)
+                                .ToList();
+
+            Assert.Equal(new[] { 1, 4 }, remaining);
+        }
+
+        [Fact]
+        public void RemoveRange_WhenOutsideBounds_DoesNothing()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var first = all.First().Timestamp.UtcDateTime;
+            var last = all.Last().Timestamp.UtcDateTime;
+
+            // A range strictly before the first item
+            var beforeFrom = first.AddSeconds(-10);
+            var beforeTo = first.AddSeconds(-1);
+
+            list.RemoveRange(beforeFrom, beforeTo);
+
+            Assert.Equal(3, list.Count);
+
+            // A range strictly after the last item
+            var afterFrom = last.AddSeconds(1);
+            var afterTo = last.AddSeconds(10);
+
+            list.RemoveRange(afterFrom, afterTo);
+
+            Assert.Equal(3, list.Count);
+        }
+
+        [Fact]
+        public void Clear_RemovesAllItems()
+        {
+            var list = new TemporalSortedList<string>();
+            list.Add("a");
+            list.Add("b");
+
+            Assert.True(list.Count > 0);
+
+            list.Clear();
+
+            Assert.Equal(0, list.Count);
+            Assert.Empty(list.GetInRange(DateTime.MinValue, DateTime.MaxValue));
+            Assert.Null(list.GetLatest());
+            Assert.Null(list.GetEarliest());
+        }
+
+        [Fact]
+        public void CountInRange_MatchesGetInRangeCount()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(10);
+            list.Add(20);
+            list.Add(30);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t1 = all[0].Timestamp.UtcDateTime;
+            var t3 = all[2].Timestamp.UtcDateTime;
+
+            var items = list.GetInRange(t1, t3).ToList();
+            var count = list.CountInRange(t1, t3);
+
+            Assert.Equal(items.Count, count);
+            Assert.Equal(3, count);
+        }
+
+        [Fact]
+        public void GetTimeSpan_ReturnsZero_ForLessThanTwoItems()
+        {
+            var list = new TemporalSortedList<int>();
+            Assert.Equal(TimeSpan.Zero, list.GetTimeSpan());
+
+            list.Add(1);
+            Assert.Equal(TimeSpan.Zero, list.GetTimeSpan());
+        }
+
+        [Fact]
+        public void GetTimeSpan_IsNonNegative_AndConsistentWithEarliestLatest()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var span = list.GetTimeSpan();
+            Assert.True(span >= TimeSpan.Zero);
+
+            var earliest = list.GetEarliest()!;
+            var latest = list.GetLatest()!;
+            var expected = latest.Timestamp - earliest.Timestamp;
+
+            // Per implementation, negative spans are clamped to zero; here it must be non-negative.
+            Assert.Equal(expected, span);
+        }
+
+        [Fact]
+        public void GetNearest_OnEmptyList_ReturnsNull()
+        {
+            var list = new TemporalSortedList<int>();
+            Assert.Null(list.GetNearest(DateTime.UtcNow));
+        }
+
+        [Fact]
+        public void GetNearest_BeforeFirst_ReturnsFirst_AfterLast_ReturnsLast()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var first = all.First();
+            var last = all.Last();
+
+            var before = list.GetNearest(first.Timestamp.UtcDateTime.AddTicks(-10));
+            var after = list.GetNearest(last.Timestamp.UtcDateTime.AddTicks(10));
+
+            Assert.NotNull(before);
+            Assert.NotNull(after);
+
+            Assert.Equal(first.Value, before!.Value);
+            Assert.Equal(last.Value, after!.Value);
+        }
+
+        [Fact]
+        public void RemoveOlderThan_IsExclusive_RemovesStrictlyOlderOnly()
+        {
+            var list = new TemporalSortedList<int>();
+            list.Add(1);
+            list.Add(2);
+            list.Add(3);
+
+            var all = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            var t2 = all.Single(i => i.Value == 2).Timestamp.UtcDateTime;
+
+            // Remove items with ts < t2 (exclusive), so item "2" must remain.
+            list.RemoveOlderThan(t2);
+
+            var remaining = list.GetInRange(DateTime.MinValue, DateTime.MaxValue)
+                                .Select(i => i.Value)
+                                .ToList();
+
+            Assert.Equal(new[] { 2, 3 }, remaining);
+        }
+
+        [Fact]
+        public void Add_ManyItems_CountMatches_AndTimestampsAreStrictlyIncreasing()
+        {
+            var list = new TemporalSortedList<int>();
+
+            for (int i = 0; i < 500; i++)
+                list.Add(i);
+
+            Assert.Equal(500, list.Count);
+
+            var items = list.GetInRange(DateTime.MinValue, DateTime.MaxValue).ToList();
+            Assert.Equal(500, items.Count);
+
+            for (int i = 1; i < items.Count; i++)
+            {
+                // TemporalItem<T>.Create guarantees strictly increasing UTC ticks per closed generic type.
+                Assert.True(items[i].Timestamp.UtcTicks > items[i - 1].Timestamp.UtcTicks);
+            }
+        }
     }
 }

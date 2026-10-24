@@ -1,4 +1,4 @@
-﻿// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
+// (c) 2025 Francesco Del Re <francesco.delre.87@gmail.com>
 // This code is licensed under MIT license (see LICENSE.txt for details)
 using BenchmarkDotNet.Attributes;
 using TemporalCollections.Collections;
@@ -19,10 +19,10 @@ namespace TemporalCollections.PerformanceTests.Benchmarks
         public void Setup()
         {
             _queue = new TemporalQueue<int>();
-            _values = Enumerable.Range(0, 10000).ToArray();
+            _values = Enumerable.Range(0, 5000).ToArray();
             _now = DateTime.UtcNow;
 
-            // Pre-fill the queue with 10k items with timestamps spread in the past 10000 seconds
+            // Pre-fill the queue with 5k items with timestamps spread in the past 10000 seconds
             for (int i = 0; i < _values.Length; i++)
             {
                 var item = new TemporalItem<int>(_values[i], _now.AddSeconds(-_values.Length + i));

@@ -15,6 +15,7 @@ namespace TemporalCollections.Collections
     {
         private readonly Lock _lock = new();
         private readonly TemporalItem<T>[] _buffer;
+        private readonly TimeProvider _timeProvider;
         private int _head;
         private int _count;
 
@@ -25,10 +26,21 @@ namespace TemporalCollections.Collections
         /// Initializes a new instance of the <see cref="TemporalCircularBuffer{T}"/> class with the specified capacity.
         /// </summary>
         /// <exception cref="ArgumentException">Thrown if capacity is not positive.</exception>
-        public TemporalCircularBuffer(int capacity)
+        public TemporalCircularBuffer(int capacity) : this(capacity, TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance with the specified capacity and clock used for timestamps.
+        /// </summary>
+        /// <exception cref="ArgumentException">Thrown if capacity is not positive.</exception>
+        public TemporalCircularBuffer(int capacity, TimeProvider timeProvider)
         {
             if (capacity <= 0)
                 throw new ArgumentException("Capacity must be positive", nameof(capacity));
+            ArgumentNullException.ThrowIfNull(timeProvider);
+
+            _timeProvider = timeProvider;
 
             Capacity = capacity;
             _buffer = new TemporalItem<T>[capacity];
@@ -48,10 +60,10 @@ namespace TemporalCollections.Collections
         /// </summary>
         public void Add(T item)
         {
-            var temporalItem = TemporalItem<T>.Create(item);
-
             lock (_lock)
             {
+                // Timestamp is created under the lock so that insertion order matches timestamp order.
+                var temporalItem = TemporalItem<T>.Create(item, _timeProvider);
                 _buffer[_head] = temporalItem;
                 _head = (_head + 1) % Capacity;
 
@@ -99,8 +111,8 @@ namespace TemporalCollections.Collections
                     long x = item.Timestamp.UtcTicks;
                     if (f <= x && x <= t)
                         list.Add(item);
-                    // Fast-path possibile: items cronologici → si potrebbe interrompere quando x > t.
-                    // Evitiamo early-break per mantenere IterateOrdered semplice e senza effetti collaterali.
+                    // Possible fast-path: chronological items → we could stop when x > t.
+                    // We avoid early-break to keep IterateOrdered simple and free of side effects.
                 });
                 return list;
             }

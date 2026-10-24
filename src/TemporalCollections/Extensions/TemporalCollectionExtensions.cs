@@ -118,6 +118,134 @@ namespace TemporalCollections.Extensions
         }
 
         /// <summary>
+        /// Retrieves the latest item whose timestamp is less than or equal to the specified time.
+        /// Returns <c>null</c> when no such item exists.
+        /// </summary>
+        public static TemporalItem<T>? GetAtOrBefore<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetInRange(DateTimeOffset.MinValue, time).LastOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the latest item whose timestamp is less than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrBefore<T>(this ITimeQueryable<T> source, DateTimeOffset time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrBefore(time);
+            return item is not null;
+        }
+
+        /// <summary>
+        /// Retrieves the earliest item whose timestamp is greater than or equal to the specified time.
+        /// Returns <c>null</c> when no such item exists.
+        /// </summary>
+        public static TemporalItem<T>? GetAtOrAfter<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetInRange(time, DateTimeOffset.MaxValue).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the earliest item whose timestamp is greater than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrAfter<T>(this ITimeQueryable<T> source, DateTimeOffset time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrAfter(time);
+            return item is not null;
+        }
+
+        /// <summary>
+        /// Retrieves the latest item whose timestamp is less than or equal to the specified time.
+        /// Returns <c>null</c> when no such item exists.
+        /// </summary>
+        public static TemporalItem<T>? GetAtOrBefore<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetInRange(DateTime.MinValue, time).LastOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the latest item whose timestamp is less than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrBefore<T>(this ITimeQueryable<T> source, DateTime time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrBefore(time);
+            return item is not null;
+        }
+
+        /// <summary>
+        /// Retrieves the earliest item whose timestamp is greater than or equal to the specified time.
+        /// Returns <c>null</c> when no such item exists.
+        /// </summary>
+        public static TemporalItem<T>? GetAtOrAfter<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetInRange(time, DateTime.MaxValue).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the earliest item whose timestamp is greater than or equal to the specified time.
+        /// </summary>
+        public static bool TryGetAtOrAfter<T>(this ITimeQueryable<T> source, DateTime time, out TemporalItem<T>? item)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            item = source.GetAtOrAfter(time);
+            return item is not null;
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly before the specified time.
+        /// </summary>
+        public static int CountBefore<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetBefore(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly after the specified time.
+        /// </summary>
+        public static int CountAfter<T>(this ITimeQueryable<T> source, DateTimeOffset time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetAfter(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly before the specified time.
+        /// </summary>
+        public static int CountBefore<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetBefore(time).Count();
+        }
+
+        /// <summary>
+        /// Counts the number of items whose timestamp is strictly after the specified time.
+        /// </summary>
+        public static int CountAfter<T>(this ITimeQueryable<T> source, DateTime time)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            return source.GetAfter(time).Count();
+        }
+
+        /// <summary>
         /// Groups all temporal items into fixed-size time buckets (e.g., per minute, hour, day)
         /// and applies a custom aggregation function to each bucket.
         /// </summary>

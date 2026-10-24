@@ -18,22 +18,58 @@ namespace TemporalCollections.Collections
         where TKey : notnull
     {
         private readonly ConcurrentDictionary<TKey, List<TemporalItem<TValue>>> _dict = new();
+        private readonly TimeProvider _timeProvider;
 
-        private static readonly IComparer<TemporalItem<TValue>> TimestampOnlyComparer
-            = new TimestampOnlyComparerImpl();
+        /// <summary>
+        /// Initializes a new dictionary using the system clock for timestamps.
+        /// </summary>
+        public TemporalDictionary() : this(TimeProvider.System)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new dictionary using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalDictionary(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
+        }
 
         /// <summary>
         /// Adds a new value associated with the specified key, timestamped with the current UTC time.
         /// </summary>
         public void Add(TKey key, TValue value)
         {
-            var temporalItem = TemporalItem<TValue>.Create(value);
-            var list = _dict.GetOrAdd(key, _ => []);
-            lock (list)
+            // Retry loop
+            // between GetOrAdd and lock(list), the list becomes orphaned. We detect this
+            // by verifying the list is still the one in the dictionary after acquiring the lock.
+            while (true)
             {
-                int idx = list.BinarySearch(temporalItem, TimestampOnlyComparer);
-                if (idx < 0) idx = ~idx;
-                list.Insert(idx, temporalItem);
+                var list = _dict.GetOrAdd(key, _ => []);
+
+                lock (list)
+                {
+                    // Verify this list is still the one associated with the key.
+                    if (_dict.TryGetValue(key, out var current) && ReferenceEquals(current, list))
+                    {
+                        // Because timestamps are strictly increasing across all TemporalItem<TValue>
+                        // instances created via TemporalItem<T>.Create, and we never insert items
+                        // with arbitrary timestamps, we know that:
+                        //
+                        //   - For each key, the sequence of timestamps in "list" is strictly increasing.
+                        //   - The new "temporalItem" always has the largest (most recent) timestamp.
+                        //
+                        // Therefore, we can safely append to the end of the list while preserving
+                        // the sorted-by-timestamp invariant. No BinarySearch + Insert is needed.
+                        // The item is created under the per-key lock so concurrent Adds on the
+                        // same key cannot append out of timestamp order.
+                        var temporalItem = TemporalItem<TValue>.Create(value, _timeProvider);
+                        list.Add(temporalItem);
+                        return;
+                    }
+                }
+                // List was removed concurrently; retry with a fresh GetOrAdd.
             }
         }
 
@@ -81,9 +117,14 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    list.RemoveAll(item => item.Timestamp.UtcTicks < c);
+                    // Binary search: find first index with ts >= cutoff, then remove [0, idx) in one shot
+                    int idx = LowerBound(list, c);
+                    if (idx > 0)
+                        list.RemoveRange(0, idx);
+
                     if (list.Count == 0)
-                        _dict.TryRemove(kvp.Key, out _);
+                        // Remove only if the key still maps to this list (a concurrent Add may have replaced it).
+                        _dict.TryRemove(new KeyValuePair<TKey, List<TemporalItem<TValue>>>(kvp.Key, list));
                 }
             }
         }
@@ -119,14 +160,18 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    foreach (var item in list)
+                    int n = list.Count;
+                    if (n == 0) continue;
+
+                    // Binary search: skip elements outside [f, t] in O(log n)
+                    int lo = LowerBound(list, f);
+                    int hi = UpperBound(list, t) - 1;
+
+                    for (int i = lo; i <= hi; i++)
                     {
-                        long x = item.Timestamp.UtcTicks;
-                        if (f <= x && x <= t)
-                        {
-                            var pair = new KeyValuePair<TKey, TValue>(kvp.Key, item.Value);
-                            results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(pair, item.Timestamp));
-                        }
+                        var item = list[i];
+                        var pair = new KeyValuePair<TKey, TValue>(kvp.Key, item.Value);
+                        results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(pair, item.Timestamp));
                     }
                 }
             }
@@ -184,11 +229,11 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    count += list.Count(i =>
-                    {
-                        long x = i.Timestamp.UtcTicks;
-                        return f <= x && x <= t;
-                    });
+                    if (list.Count == 0) continue;
+                    // Binary search: count = UpperBound(t) - LowerBound(f)
+                    int lo = LowerBound(list, f);
+                    int hi = UpperBound(list, t);
+                    count += hi - lo;
                 }
             }
             return count;
@@ -215,13 +260,16 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    list.RemoveAll(i =>
-                    {
-                        long x = i.Timestamp.UtcTicks;
-                        return f <= x && x <= t;
-                    });
+                    if (list.Count == 0) continue;
+                    // The list is sorted ascending: items in [f, t] form a contiguous segment
+                    int lo = LowerBound(list, f);          // first index with ts >= f
+                    int hi = UpperBound(list, t);          // first index with ts >  t
+                    int removeCount = hi - lo;
+                    if (removeCount > 0)
+                        list.RemoveRange(lo, removeCount);
+
                     if (list.Count == 0)
-                        _dict.TryRemove(kvp.Key, out _);
+                        _dict.TryRemove(new KeyValuePair<TKey, List<TemporalItem<TValue>>>(kvp.Key, list));
                 }
             }
         }
@@ -242,15 +290,15 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    foreach (var it in list)
+                    if (list.Count == 0) continue;
+                    // List is sorted ascending: last element is the latest
+                    var it = list[^1];
+                    if (!found || it.Timestamp.UtcTicks > bestTs.UtcTicks)
                     {
-                        if (!found || it.Timestamp.UtcTicks > bestTs.UtcTicks)
-                        {
-                            bestTs = it.Timestamp;
-                            bestKey = kvp.Key;
-                            bestVal = it.Value;
-                            found = true;
-                        }
+                        bestTs = it.Timestamp;
+                        bestKey = kvp.Key;
+                        bestVal = it.Value;
+                        found = true;
                     }
                 }
             }
@@ -278,15 +326,15 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    foreach (var it in list)
+                    if (list.Count == 0) continue;
+                    // List is sorted ascending: first element is the earliest
+                    var it = list[0];
+                    if (!found || it.Timestamp.UtcTicks < bestTs.UtcTicks)
                     {
-                        if (!found || it.Timestamp.UtcTicks < bestTs.UtcTicks)
-                        {
-                            bestTs = it.Timestamp;
-                            bestKey = kvp.Key;
-                            bestVal = it.Value;
-                            found = true;
-                        }
+                        bestTs = it.Timestamp;
+                        bestKey = kvp.Key;
+                        bestVal = it.Value;
+                        found = true;
                     }
                 }
             }
@@ -312,14 +360,14 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    foreach (var item in list)
+                    // Binary search: all elements before LowerBound(cutoff) have ts < cutoff
+                    int hi = LowerBound(list, cutoff);
+                    for (int i = 0; i < hi; i++)
                     {
-                        if (item.Timestamp.UtcTicks < cutoff)
-                        {
-                            results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
-                                new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
-                                item.Timestamp));
-                        }
+                        var item = list[i];
+                        results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
+                            new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
+                            item.Timestamp));
                     }
                 }
             }
@@ -342,14 +390,14 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    foreach (var item in list)
+                    // Binary search: UpperBound(cutoff) is the first index with ts > cutoff
+                    int lo = UpperBound(list, cutoff);
+                    for (int i = lo; i < list.Count; i++)
                     {
-                        if (item.Timestamp.UtcTicks > cutoff)
-                        {
-                            results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
-                                new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
-                                item.Timestamp));
-                        }
+                        var item = list[i];
+                        results.Add(new TemporalItem<KeyValuePair<TKey, TValue>>(
+                            new KeyValuePair<TKey, TValue>(kvp.Key, item.Value),
+                            item.Timestamp));
                     }
                 }
             }
@@ -371,11 +419,9 @@ namespace TemporalCollections.Collections
                 var list = kvp.Value;
                 lock (list)
                 {
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        if (list[i].Timestamp.UtcTicks >= f)
-                            count++;
-                    }
+                    if (list.Count == 0) continue;
+                    // All elements from LowerBound(f) to end have ts >= f
+                    count += list.Count - LowerBound(list, f);
                 }
             }
 
@@ -506,11 +552,5 @@ namespace TemporalCollections.Collections
         }
 
         #endregion
-
-        private sealed class TimestampOnlyComparerImpl : IComparer<TemporalItem<TValue>>
-        {
-            public int Compare(TemporalItem<TValue>? x, TemporalItem<TValue>? y)
-                => x!.Timestamp.UtcTicks.CompareTo(y!.Timestamp.UtcTicks);
-        }
     }
 }

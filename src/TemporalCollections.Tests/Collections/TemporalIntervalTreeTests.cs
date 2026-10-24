@@ -660,5 +660,147 @@ namespace TemporalCollections.Tests.Collections
             var tie = tree.GetNearest(mid);
             Assert.Equal("C", tie!.Value);
         }
+
+        /// <summary>Distinct values that always produce the same hash code.</summary>
+        private sealed record Colliding(string Name)
+        {
+            public override int GetHashCode() => 42;
+        }
+
+        [Fact]
+        public void Insert_DistinctValuesWithSameHash_AreAllStored()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(10);
+
+            tree.Insert(s, e, new Colliding("a"));
+            tree.Insert(s, e, new Colliding("b"));
+            tree.Insert(s, e, new Colliding("c"));
+
+            var values = tree.Query(s, e).Select(v => v.Name).OrderBy(x => x).ToList();
+            Assert.Equal(new[] { "a", "b", "c" }, values);
+            Assert.Equal(3, tree.CountInRange(s, e));
+        }
+
+        [Fact]
+        public void Remove_WithCollidingHash_RemovesOnlyMatchingValue()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(10);
+
+            for (int i = 0; i < 50; i++)
+                tree.Insert(s, e, new Colliding("v" + i));
+
+            Assert.True(tree.Remove(s, e, new Colliding("v25")));
+            Assert.False(tree.Remove(s, e, new Colliding("v25")));
+            Assert.False(tree.Remove(s, e, new Colliding("missing")));
+
+            var values = tree.Query(s, e).Select(v => v.Name).ToList();
+            Assert.Equal(49, values.Count);
+            Assert.DoesNotContain("v25", values);
+        }
+
+        [Fact]
+        public void Insert_ExactDuplicate_IsIgnored()
+        {
+            var tree = new TemporalIntervalTree<Colliding>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(1);
+
+            tree.Insert(s, e, new Colliding("x"));
+            tree.Insert(s, e, new Colliding("x"));
+
+            Assert.Single(tree.Query(s, e));
+        }
+
+        [Fact]
+        public void InsertAndRemove_NullValues_AreSupported()
+        {
+            var tree = new TemporalIntervalTree<string?>();
+            var s = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var e = s.AddMinutes(1);
+
+            tree.Insert(s, e, null);
+            tree.Insert(s, e, null);
+            Assert.Single(tree.Query(s, e));
+            Assert.True(tree.Remove(s, e, null));
+            Assert.Empty(tree.Query(s, e));
+        }
+
+        private static TemporalIntervalTree<string> BuildSemanticsTree(out DateTimeOffset t0)
+        {
+            // A: [t0, t0+10m]  B: [t0+5m, t0+6m]  C: [t0+20m, t0+30m]
+            t0 = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var tree = new TemporalIntervalTree<string>();
+            tree.Insert(t0, t0.AddMinutes(10), "A");
+            tree.Insert(t0.AddMinutes(5), t0.AddMinutes(6), "B");
+            tree.Insert(t0.AddMinutes(20), t0.AddMinutes(30), "C");
+            return tree;
+        }
+
+        [Fact]
+        public void GetOverlapping_And_CountOverlapping_AreConsistent()
+        {
+            var tree = BuildSemanticsTree(out var t0);
+            var from = t0.AddMinutes(8);
+            var to = t0.AddMinutes(25);
+
+            var overlapping = tree.GetOverlapping(from, to).Select(i => i.Value).OrderBy(v => v).ToList();
+            Assert.Equal(new[] { "A", "C" }, overlapping);
+            Assert.Equal(overlapping.Count, tree.CountOverlapping(from, to));
+            Assert.Equal(overlapping.Count, tree.CountOverlapping(to, from));
+        }
+
+        [Fact]
+        public void GetInRange_UsesOverlap_WhileCountInRange_UsesStart()
+        {
+            var tree = BuildSemanticsTree(out var t0);
+            var from = t0.AddMinutes(8);
+            var to = t0.AddMinutes(25);
+
+            // Pins current 1.x semantics: overlap vs Start-based.
+            Assert.Equal(2, tree.GetInRange(from, to).Count()); // A (overlaps) + C
+            Assert.Equal(1, tree.CountInRange(from, to));       // only C starts in range
+        }
+
+        [Fact]
+        public void RemoveEndedBefore_KeepsActiveIntervals_AndMatchesRemoveOlderThan()
+        {
+            var t1 = BuildSemanticsTree(out var t0);
+            var t2 = BuildSemanticsTree(out _);
+            var cutoff = t0.AddMinutes(8); // B ended (6m), A still active (10m), C future
+
+            t1.RemoveEndedBefore(cutoff);
+            t2.RemoveOlderThan(cutoff);
+
+            var r1 = t1.GetOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).Select(i => i.Value).OrderBy(v => v).ToList();
+            var r2 = t2.GetOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue).Select(i => i.Value).OrderBy(v => v).ToList();
+            Assert.Equal(new[] { "A", "C" }, r1);
+            Assert.Equal(r1, r2);
+        }
+
+        [Fact]
+        public void RemoveEndedBefore_EndEqualToCutoff_IsKept()
+        {
+            var t0 = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var tree = new TemporalIntervalTree<string>();
+            tree.Insert(t0, t0.AddMinutes(1), "X");
+
+            tree.RemoveEndedBefore(t0.AddMinutes(1));
+            Assert.Equal(1, tree.CountOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+
+            tree.RemoveEndedBefore(t0.AddMinutes(1).AddTicks(1));
+            Assert.Equal(0, tree.CountOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+        }
+
+        [Fact]
+        public void CountOverlapping_Empty_ReturnsZero()
+        {
+            var tree = new TemporalIntervalTree<int>();
+            Assert.Equal(0, tree.CountOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+            Assert.Empty(tree.GetOverlapping(DateTimeOffset.MinValue, DateTimeOffset.MaxValue));
+        }
     }
 }

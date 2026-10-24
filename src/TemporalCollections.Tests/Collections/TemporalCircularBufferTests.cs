@@ -354,5 +354,25 @@ namespace TemporalCollections.Tests.Collections
                 Assert.Equal("C", nearCeil!.Value);
             }
         }
+
+        [Fact]
+        public async Task Add_Concurrent_KeepsChronologicalOrder()
+        {
+            const int threads = 8, perThread = 5_000;
+            var buffer = new TemporalCircularBuffer<int>(threads * perThread);
+            using var gate = new Barrier(threads);
+
+            var tasks = Enumerable.Range(0, threads).Select(t => Task.Factory.StartNew(() =>
+            {
+                gate.SignalAndWait();
+                for (int i = 0; i < perThread; i++) buffer.Add(t * perThread + i);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
+            await Task.WhenAll(tasks);
+
+            var items = buffer.GetSnapshot();
+            Assert.Equal(threads * perThread, items.Count);
+            for (int i = 1; i < items.Count; i++)
+                Assert.True(items[i - 1].Timestamp < items[i].Timestamp, $"Out of order at index {i}");
+        }
     }
 }

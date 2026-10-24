@@ -11,6 +11,17 @@ namespace TemporalCollections.Collections
     /// Public API uses DateTime; internal timeline is DateTimeOffset (UTC).
     /// Treap-balanced (randomized) BST over (Start, End, Value) with augmented MaxEnd for interval queries.
     /// </summary>
+    /// <remarks>
+    /// Time semantics of the <see cref="ITimeQueryable{T}"/> members:
+    /// <list type="bullet">
+    /// <item><see cref="GetInRange"/> returns intervals that <b>overlap</b> the range.</item>
+    /// <item><see cref="RemoveOlderThan"/> removes intervals whose <b>End</b> is before the cutoff.</item>
+    /// <item>All other members (CountInRange, RemoveRange, GetBefore, GetAfter, GetNearest,
+    /// GetEarliest, GetLatest, GetTimeSpan, CountSince) use the interval <b>Start</b> as timestamp.</item>
+    /// </list>
+    /// Prefer the explicit <see cref="GetOverlapping"/>, <see cref="CountOverlapping"/> and
+    /// <see cref="RemoveEndedBefore"/> for interval-specific queries.
+    /// </remarks>
     /// <typeparam name="T">The type of the value associated with each interval.</typeparam>
     public class TemporalIntervalTree<T> : TimeQueryableBase<T>
     {
@@ -35,6 +46,16 @@ namespace TemporalCollections.Collections
             public T Value = default!;
 
             /// <summary>
+            /// Cached hash of <see cref="Value"/> (ordering key component).
+            /// </summary>
+            public readonly int Hash;
+
+            /// <summary>
+            /// Unique insertion sequence; final tie-break for distinct values sharing the same hash.
+            /// </summary>
+            public readonly long Seq;
+
+            /// <summary>
             /// The maximum End of this node or any of its descendants (UTC).
             /// </summary>
             public DateTimeOffset MaxEnd;
@@ -47,7 +68,7 @@ namespace TemporalCollections.Collections
             public Node? Left;
             public Node? Right;
 
-            public Node(DateTimeOffset start, DateTimeOffset end, T value, int priority)
+            public Node(DateTimeOffset start, DateTimeOffset end, T value, int hash, long seq, int priority)
             {
                 if (end < start)
                     throw new ArgumentException("End must be >= Start", nameof(end));
@@ -55,6 +76,8 @@ namespace TemporalCollections.Collections
                 Start = start;
                 End = end;
                 Value = value;
+                Hash = hash;
+                Seq = seq;
                 Priority = priority;
                 MaxEnd = end;
             }
@@ -63,6 +86,7 @@ namespace TemporalCollections.Collections
         private Node? _root;
         private readonly Lock _lock = new();
         private readonly Random _rng = new(); // used only under _lock
+        private long _seq; // used only under _lock
 
         /// <summary>
         /// Inserts a new interval with an associated value into the tree.
@@ -76,7 +100,13 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
-                _root = InsertTreap(_root, s, e, value);
+                int h = HashOf(value);
+
+                // Exact duplicate (Start, End, Value): no-op.
+                if (FindNode(_root, s, e, h, value) is not null)
+                    return;
+
+                _root = InsertTreap(_root, s, e, value, h, ++_seq);
             }
         }
 
@@ -90,8 +120,12 @@ namespace TemporalCollections.Collections
 
             lock (_lock)
             {
+                var target = FindNode(_root, s, e, HashOf(value), value);
+                if (target is null)
+                    return false;
+
                 bool removed;
-                (_root, removed) = RemoveTreap(_root, s, e, value);
+                (_root, removed) = RemoveTreap(_root, target.Start, target.End, target.Hash, target.Seq);
                 return removed;
             }
         }
@@ -100,7 +134,18 @@ namespace TemporalCollections.Collections
         /// Returns all values whose intervals overlap with the given query range.
         /// The returned items are wrapped as <see cref="TemporalItem{T}"/> where Timestamp equals interval Start.
         /// </summary>
+        /// <remarks>
+        /// Uses overlap semantics (Start &lt;= queryEnd and End &gt;= queryStart), unlike
+        /// <see cref="CountInRange"/> which counts by Start. Equivalent to <see cref="GetOverlapping"/>.
+        /// </remarks>
         public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset queryStart, DateTimeOffset queryEnd)
+            => GetOverlapping(queryStart, queryEnd);
+
+        /// <summary>
+        /// Returns all intervals overlapping [queryStart, queryEnd] (inclusive), i.e.
+        /// Start &lt;= queryEnd and End &gt;= queryStart. Timestamp of each item equals interval Start.
+        /// </summary>
+        public IReadOnlyList<TemporalItem<T>> GetOverlapping(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
             var qs = queryStart;
             var qe = queryEnd;
@@ -116,17 +161,43 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Removes all intervals that have already ended strictly before the cutoff (End &lt; cutoff).
+        /// Returns the number of intervals overlapping [queryStart, queryEnd] (inclusive).
+        /// Consistent with <see cref="GetOverlapping"/>.
         /// </summary>
-        public override void RemoveOlderThan(DateTimeOffset cutoff)
+        public int CountOverlapping(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
-            var c = cutoff;
+            var qs = queryStart;
+            var qe = queryEnd;
+            if (qs > qe)
+                (qs, qe) = (qe, qs);
 
             lock (_lock)
             {
-                _root = RemoveOlderThanInternal(_root, c);
+                return CountOverlap(_root, qs, qe);
             }
         }
+
+        /// <summary>
+        /// Removes all intervals that ended strictly before <paramref name="cutoff"/> (End &lt; cutoff).
+        /// Intervals still active at the cutoff are kept.
+        /// </summary>
+        public void RemoveEndedBefore(DateTimeOffset cutoff)
+        {
+            lock (_lock)
+            {
+                _root = RemoveOlderThanInternal(_root, cutoff);
+            }
+        }
+
+        /// <summary>
+        /// Removes all intervals that have already ended strictly before the cutoff (End &lt; cutoff).
+        /// </summary>
+        /// <remarks>
+        /// Uses End semantics, unlike <see cref="RemoveRange"/> which removes by Start.
+        /// Equivalent to <see cref="RemoveEndedBefore"/>.
+        /// </remarks>
+        public override void RemoveOlderThan(DateTimeOffset cutoff)
+            => RemoveEndedBefore(cutoff);
 
         /// <summary>
         /// Returns all values whose intervals overlap with the given query range (values only).
@@ -168,6 +239,10 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the number of items whose timestamps fall within [from, to] (inclusive). Timestamp == interval Start.
         /// </summary>
+        /// <remarks>
+        /// Counts by Start, so the result may differ from <c>GetInRange(from, to).Count()</c> (overlap semantics).
+        /// Use <see cref="CountOverlapping"/> for an overlap-consistent count.
+        /// </remarks>
         public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
             var f = from;
@@ -308,22 +383,49 @@ namespace TemporalCollections.Collections
 
         #region Internal helpers (UTC DateTimeOffset, Treap)
 
+        private static int HashOf(T value)
+            => value is null ? 0 : EqualityComparer<T>.Default.GetHashCode(value);
+
         /// <summary>
-        /// Total order over (Start, End, Value) to avoid long equal-key chains.
+        /// Compares (Start, End, Hash) only; nodes sharing this prefix form a contiguous in-order group.
         /// </summary>
-        private static int CompareKey(DateTimeOffset s1, DateTimeOffset e1, T v1,
-                                      DateTimeOffset s2, DateTimeOffset e2, T v2)
+        private static int ComparePrefix(DateTimeOffset s1, DateTimeOffset e1, int h1, Node n)
         {
-            int c = s1.CompareTo(s2);
+            int c = s1.CompareTo(n.Start);
             if (c != 0) return c;
-            c = e1.CompareTo(e2);
+            c = e1.CompareTo(n.End);
             if (c != 0) return c;
+            return h1.CompareTo(n.Hash);
+        }
 
-            if (EqualityComparer<T>.Default.Equals(v1, v2)) return 0;
+        /// <summary>
+        /// Total order over (Start, End, Hash, Seq). Seq is unique, so distinct values
+        /// with colliding hashes never compare equal.
+        /// </summary>
+        private static int CompareKey(DateTimeOffset s1, DateTimeOffset e1, int h1, long q1, Node n)
+        {
+            int c = ComparePrefix(s1, e1, h1, n);
+            return c != 0 ? c : q1.CompareTo(n.Seq);
+        }
 
-            int h1 = HashCode.Combine(v1);
-            int h2 = HashCode.Combine(v2);
-            return h1 < h2 ? -1 : (h1 > h2 ? 1 : 0);
+        /// <summary>
+        /// Finds a node with exactly (start, end, value), scanning the group of nodes sharing the same hash.
+        /// </summary>
+        private static Node? FindNode(Node? node, DateTimeOffset start, DateTimeOffset end, int hash, T value)
+        {
+            while (node is not null)
+            {
+                int c = ComparePrefix(start, end, hash, node);
+                if (c < 0) { node = node.Left; continue; }
+                if (c > 0) { node = node.Right; continue; }
+
+                if (EqualityComparer<T>.Default.Equals(value, node.Value))
+                    return node;
+
+                return FindNode(node.Left, start, end, hash, value)
+                    ?? FindNode(node.Right, start, end, hash, value);
+            }
+            return null;
         }
 
         /// <summary>
@@ -366,29 +468,25 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Treap insert with priority heap property (min-heap).
         /// </summary>
-        private Node InsertTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        private Node InsertTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value, int hash, long seq)
         {
             if (node is null)
-                return new Node(start, end, value, _rng.Next());
+                return new Node(start, end, value, hash, seq, _rng.Next());
 
-            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
+            // Seq is unique, so cmp is never 0.
+            int cmp = CompareKey(start, end, hash, seq, node);
 
             if (cmp < 0)
             {
-                node.Left = InsertTreap(node.Left, start, end, value);
+                node.Left = InsertTreap(node.Left, start, end, value, hash, seq);
                 if (node.Left!.Priority < node.Priority)
                     node = RotateRight(node);
             }
-            else if (cmp > 0)
-            {
-                node.Right = InsertTreap(node.Right, start, end, value);
-                if (node.Right!.Priority < node.Priority)
-                    node = RotateLeft(node);
-            }
             else
             {
-                // Exact duplicate (Start, End, Value): no-op.
-                return node;
+                node.Right = InsertTreap(node.Right, start, end, value, hash, seq);
+                if (node.Right!.Priority < node.Priority)
+                    node = RotateLeft(node);
             }
 
             Update(node);
@@ -399,20 +497,20 @@ namespace TemporalCollections.Collections
         /// Removes a node matching (start, end, value) using treap deletion:
         /// rotate the node down according to child priorities until it becomes a leaf, then drop it.
         /// </summary>
-        private static (Node? node, bool removed) RemoveTreap(Node? node, DateTimeOffset start, DateTimeOffset end, T value)
+        private static (Node? node, bool removed) RemoveTreap(Node? node, DateTimeOffset start, DateTimeOffset end, int hash, long seq)
         {
             if (node is null) return (null, false);
 
-            int cmp = CompareKey(start, end, value, node.Start, node.End, node.Value);
+            int cmp = CompareKey(start, end, hash, seq, node);
 
             bool removed;
             if (cmp < 0)
             {
-                (node.Left, removed) = RemoveTreap(node.Left, start, end, value);
+                (node.Left, removed) = RemoveTreap(node.Left, start, end, hash, seq);
             }
             else if (cmp > 0)
             {
-                (node.Right, removed) = RemoveTreap(node.Right, start, end, value);
+                (node.Right, removed) = RemoveTreap(node.Right, start, end, hash, seq);
             }
             else
             {
@@ -485,10 +583,10 @@ namespace TemporalCollections.Collections
 
             if (node.End < cutoff)
             {
-                node = DeleteRoot(node);
-                // Ensure that possible replacement at this position is also checked
-                node = RemoveOlderThanInternal(node, cutoff);
-                return node;
+                // Children are already fully pruned by the recursive calls above,
+                // so no descendant has End < cutoff. DeleteRoot promotes a clean
+                // node, hence no extra recursion is required here.
+                return DeleteRoot(node);
             }
 
             Update(node);
@@ -507,9 +605,8 @@ namespace TemporalCollections.Collections
 
             if (node.Start >= from && node.Start <= to)
             {
-                node = DeleteRoot(node);
-                node = RemoveByStartRange(node, from, to);
-                return node;
+                // Children are already pruned, so the promoted replacement is clean.
+                return DeleteRoot(node);
             }
 
             Update(node);
@@ -523,17 +620,39 @@ namespace TemporalCollections.Collections
         {
             if (node is null) return;
 
-            // Left subtree can overlap only if its MaxEnd >= qs
+            // Left subtree can overlap only if its MaxEnd >= qs.
             if (node.Left is not null && node.Left.MaxEnd >= qs)
                 QueryCollect(node.Left, qs, qe, result);
 
-            // Current node overlaps if Start <= qe && End >= qs
+            // Current node overlaps if Start <= qe && End >= qs.
             if (node.Start <= qe && node.End >= qs)
                 result.Add(new TemporalItem<T>(node.Value, node.Start));
 
-            // Right subtree may have starts <= qe
+            // The right subtree only contains starts >= node.Start. If node.Start
+            // already exceeds qe, every right descendant exceeds qe as well and
+            // cannot overlap [qs, qe], so we can safely prune it.
             if (node.Right is not null && node.Start <= qe)
                 QueryCollect(node.Right, qs, qe, result);
+        }
+
+        /// <summary>
+        /// Counts intervals overlapping [qs, qe] using the same pruning as <see cref="QueryCollect"/>.
+        /// </summary>
+        private static int CountOverlap(Node? node, DateTimeOffset qs, DateTimeOffset qe)
+        {
+            if (node is null) return 0;
+
+            int count = 0;
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
+                count += CountOverlap(node.Left, qs, qe);
+
+            if (node.Start <= qe && node.End >= qs)
+                count++;
+
+            if (node.Right is not null && node.Start <= qe)
+                count += CountOverlap(node.Right, qs, qe);
+
+            return count;
         }
 
         /// <summary>
@@ -549,6 +668,7 @@ namespace TemporalCollections.Collections
             if (node.Start <= qe && node.End >= qs)
                 result.Add(node.Value);
 
+            // Same right-subtree pruning as in QueryCollect.
             if (node.Right is not null && node.Start <= qe)
                 QueryValues(node.Right, qs, qe, result);
         }
@@ -609,24 +729,6 @@ namespace TemporalCollections.Collections
             CollectAfter(node.Left, time, acc);
             acc.Add(new TemporalItem<T>(node.Value, node.Start));
             CollectAfter(node.Right, time, acc);
-        }
-
-        private static int CountWithEndAtOrAfter(Node? node, DateTimeOffset cutoff)
-        {
-            if (node is null) return 0;
-
-            int count = 0;
-
-            if (node.Left is not null && node.Left.MaxEnd >= cutoff)
-                count += CountWithEndAtOrAfter(node.Left, cutoff);
-
-            if (node.End >= cutoff)
-                count++;
-
-            if (node.Right is not null && node.Right.MaxEnd >= cutoff)
-                count += CountWithEndAtOrAfter(node.Right, cutoff);
-
-            return count;
         }
 
         /// <summary>

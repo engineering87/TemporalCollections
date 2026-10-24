@@ -84,7 +84,7 @@ namespace TemporalCollections.Utilities
             UnspecifiedPolicy unspecifiedPolicy = UnspecifiedPolicy.Reject)
         {
             try { utc = ToUtcOffset(dt, nameof(dt), unspecifiedPolicy); return true; }
-            catch { utc = default; return false; }
+            catch (ArgumentException) { utc = default; return false; }
         }
 
         /// <summary>
@@ -100,7 +100,7 @@ namespace TemporalCollections.Utilities
             => dt.HasValue ? UtcTicks(dt.Value, unspecifiedPolicy) : (long?)null;
 
         /// <summary>
-        /// Normalizes a [from, to] range to UTC and validates that from &lt;= to.
+        /// Normalizes a [from, to] range to UTC; if from &gt; to, the bounds are swapped.
         /// </summary>
         public static (DateTimeOffset fromUtc, DateTimeOffset toUtc) NormalizeRange(
             DateTime from, DateTime to,

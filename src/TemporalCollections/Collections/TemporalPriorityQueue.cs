@@ -22,10 +22,21 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Initializes a new instance of the <see cref="TemporalPriorityQueue{TPriority, TValue}"/> class.
         /// </summary>
-        public TemporalPriorityQueue()
+        public TemporalPriorityQueue() : this(TimeProvider.System)
         {
+        }
+
+        /// <summary>
+        /// Initializes a new instance using <paramref name="timeProvider"/> for timestamps.
+        /// </summary>
+        public TemporalPriorityQueue(TimeProvider timeProvider)
+        {
+            ArgumentNullException.ThrowIfNull(timeProvider);
+            _timeProvider = timeProvider;
             _set = new SortedSet<QueueItem>(new QueueItemComparer());
         }
+
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Gets the number of items currently in the queue.
@@ -44,7 +55,7 @@ namespace TemporalCollections.Collections
         public void Enqueue(TValue value, TPriority priority)
         {
             // TemporalItem.Create ensures strictly increasing DateTimeOffset UTC timestamps.
-            var ti = TemporalItem<TValue>.Create(value);
+            var ti = TemporalItem<TValue>.Create(value, _timeProvider);
             lock (_lock)
             {
                 _set.Add(new QueueItem(ti.Value, priority, ti.Timestamp));
@@ -352,6 +363,13 @@ namespace TemporalCollections.Collections
         /// </summary>
         private record QueueItem : TemporalItem<TValue>, IComparable<QueueItem>
         {
+            // Monotonic, collision-free sequence number used as a strict-ordering
+            // tie-breaker. Replaces RuntimeHelpers.GetHashCode (which can collide
+            // and cause SortedSet to drop distinct items).
+            private static long _seqCounter;
+
+            private readonly long _seq;
+
             /// <summary>Gets the priority of the item.</summary>
             public TPriority Priority { get; }
 
@@ -362,25 +380,25 @@ namespace TemporalCollections.Collections
                 : base(value, timestamp)
             {
                 Priority = priority;
+                _seq = Interlocked.Increment(ref _seqCounter);
             }
 
             /// <summary>
-            /// Compares this item to another based on priority, then timestamp, then runtime id for strict ordering.
+            /// Compares this item to another based on priority, then timestamp, then a
+            /// monotonic sequence id for a strict weak ordering.
             /// </summary>
             public int CompareTo(QueueItem? other)
             {
                 if (other is null) return 1;
 
-                int c = Priority.CompareTo(other.Priority);
+                int c = Comparer<TPriority>.Default.Compare(Priority, other.Priority);
                 if (c != 0) return c;
 
                 c = Timestamp.CompareTo(other.Timestamp);
                 if (c != 0) return c;
 
-                // Tie-breaker: ensure strict weak ordering to avoid SortedSet dropping distinct items
-                int hx = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
-                int hy = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(other);
-                return hx.CompareTo(hy);
+                // Final tie-breaker: monotonic sequence id, collision-free.
+                return _seq.CompareTo(other._seq);
             }
         }
 
