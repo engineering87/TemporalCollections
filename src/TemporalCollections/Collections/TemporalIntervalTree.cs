@@ -11,6 +11,17 @@ namespace TemporalCollections.Collections
     /// Public API uses DateTime; internal timeline is DateTimeOffset (UTC).
     /// Treap-balanced (randomized) BST over (Start, End, Value) with augmented MaxEnd for interval queries.
     /// </summary>
+    /// <remarks>
+    /// Time semantics of the <see cref="ITimeQueryable{T}"/> members:
+    /// <list type="bullet">
+    /// <item><see cref="GetInRange"/> returns intervals that <b>overlap</b> the range.</item>
+    /// <item><see cref="RemoveOlderThan"/> removes intervals whose <b>End</b> is before the cutoff.</item>
+    /// <item>All other members (CountInRange, RemoveRange, GetBefore, GetAfter, GetNearest,
+    /// GetEarliest, GetLatest, GetTimeSpan, CountSince) use the interval <b>Start</b> as timestamp.</item>
+    /// </list>
+    /// Prefer the explicit <see cref="GetOverlapping"/>, <see cref="CountOverlapping"/> and
+    /// <see cref="RemoveEndedBefore"/> for interval-specific queries.
+    /// </remarks>
     /// <typeparam name="T">The type of the value associated with each interval.</typeparam>
     public class TemporalIntervalTree<T> : TimeQueryableBase<T>
     {
@@ -45,7 +56,7 @@ namespace TemporalCollections.Collections
             public readonly long Seq;
 
             /// <summary>
-            /// The maximum End
+            /// The maximum End of this node or any of its descendants (UTC).
             /// </summary>
             public DateTimeOffset MaxEnd;
 
@@ -123,7 +134,18 @@ namespace TemporalCollections.Collections
         /// Returns all values whose intervals overlap with the given query range.
         /// The returned items are wrapped as <see cref="TemporalItem{T}"/> where Timestamp equals interval Start.
         /// </summary>
+        /// <remarks>
+        /// Uses overlap semantics (Start &lt;= queryEnd and End &gt;= queryStart), unlike
+        /// <see cref="CountInRange"/> which counts by Start. Equivalent to <see cref="GetOverlapping"/>.
+        /// </remarks>
         public override IEnumerable<TemporalItem<T>> GetInRange(DateTimeOffset queryStart, DateTimeOffset queryEnd)
+            => GetOverlapping(queryStart, queryEnd);
+
+        /// <summary>
+        /// Returns all intervals overlapping [queryStart, queryEnd] (inclusive), i.e.
+        /// Start &lt;= queryEnd and End &gt;= queryStart. Timestamp of each item equals interval Start.
+        /// </summary>
+        public IReadOnlyList<TemporalItem<T>> GetOverlapping(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
             var qs = queryStart;
             var qe = queryEnd;
@@ -139,17 +161,43 @@ namespace TemporalCollections.Collections
         }
 
         /// <summary>
-        /// Removes all intervals that have already ended strictly before the cutoff (End &lt; cutoff).
+        /// Returns the number of intervals overlapping [queryStart, queryEnd] (inclusive).
+        /// Consistent with <see cref="GetOverlapping"/>.
         /// </summary>
-        public override void RemoveOlderThan(DateTimeOffset cutoff)
+        public int CountOverlapping(DateTimeOffset queryStart, DateTimeOffset queryEnd)
         {
-            var c = cutoff;
+            var qs = queryStart;
+            var qe = queryEnd;
+            if (qs > qe)
+                (qs, qe) = (qe, qs);
 
             lock (_lock)
             {
-                _root = RemoveOlderThanInternal(_root, c);
+                return CountOverlap(_root, qs, qe);
             }
         }
+
+        /// <summary>
+        /// Removes all intervals that ended strictly before <paramref name="cutoff"/> (End &lt; cutoff).
+        /// Intervals still active at the cutoff are kept.
+        /// </summary>
+        public void RemoveEndedBefore(DateTimeOffset cutoff)
+        {
+            lock (_lock)
+            {
+                _root = RemoveOlderThanInternal(_root, cutoff);
+            }
+        }
+
+        /// <summary>
+        /// Removes all intervals that have already ended strictly before the cutoff (End &lt; cutoff).
+        /// </summary>
+        /// <remarks>
+        /// Uses End semantics, unlike <see cref="RemoveRange"/> which removes by Start.
+        /// Equivalent to <see cref="RemoveEndedBefore"/>.
+        /// </remarks>
+        public override void RemoveOlderThan(DateTimeOffset cutoff)
+            => RemoveEndedBefore(cutoff);
 
         /// <summary>
         /// Returns all values whose intervals overlap with the given query range (values only).
@@ -191,6 +239,10 @@ namespace TemporalCollections.Collections
         /// <summary>
         /// Returns the number of items whose timestamps fall within [from, to] (inclusive). Timestamp == interval Start.
         /// </summary>
+        /// <remarks>
+        /// Counts by Start, so the result may differ from <c>GetInRange(from, to).Count()</c> (overlap semantics).
+        /// Use <see cref="CountOverlapping"/> for an overlap-consistent count.
+        /// </remarks>
         public override int CountInRange(DateTimeOffset from, DateTimeOffset to)
         {
             var f = from;
@@ -581,6 +633,26 @@ namespace TemporalCollections.Collections
             // cannot overlap [qs, qe], so we can safely prune it.
             if (node.Right is not null && node.Start <= qe)
                 QueryCollect(node.Right, qs, qe, result);
+        }
+
+        /// <summary>
+        /// Counts intervals overlapping [qs, qe] using the same pruning as <see cref="QueryCollect"/>.
+        /// </summary>
+        private static int CountOverlap(Node? node, DateTimeOffset qs, DateTimeOffset qe)
+        {
+            if (node is null) return 0;
+
+            int count = 0;
+            if (node.Left is not null && node.Left.MaxEnd >= qs)
+                count += CountOverlap(node.Left, qs, qe);
+
+            if (node.Start <= qe && node.End >= qs)
+                count++;
+
+            if (node.Right is not null && node.Start <= qe)
+                count += CountOverlap(node.Right, qs, qe);
+
+            return count;
         }
 
         /// <summary>

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="TemporalCollections logo" width="560">
+</p>
+
 # TemporalCollections
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
